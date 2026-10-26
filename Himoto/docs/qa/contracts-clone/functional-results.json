@@ -1,0 +1,15 @@
+{
+  "passed": 8,
+  "checks": [
+    "cancelled contract copy immediately creates ID/code 33, preserves cancellation/customer and opens edit without navigation",
+    "save/reopen retains custom customer, metadata, two vehicles and print data; original source remains unchanged",
+    "clone of an edited contract copies the full saved snapshot; closing edit keeps the already-created record",
+    "new customers without contracts have persistent Blacklist and branch assignment, visible red status and direct branch filters",
+    "customer branch dropdown updates from the live shared branch catalog, including newly added branches",
+    "inline customer popup also saves Blacklist and chosen branch without redirecting or silently discarding fields",
+    "375px copy/edit keeps the stored record, traps keyboard focus, supports Escape and avoids page overflow",
+    "no JavaScript errors and no rental/API mutations during any operation"
+  ],
+  "page_errors": [],
+  "api_writes": []
+}

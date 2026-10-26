@@ -1,0 +1,105 @@
+{
+  "screens": [
+    {
+      "route": "staff",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "rows": 10,
+      "page_overflow": false,
+      "screenshot": "docs\\qa\\vercel\\staff-1440.png"
+    },
+    {
+      "route": "customers",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "rows": 10,
+      "page_overflow": false,
+      "screenshot": "docs\\qa\\vercel\\customers-1440.png"
+    },
+    {
+      "route": "contracts",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "rows": 10,
+      "page_overflow": false,
+      "screenshot": "docs\\qa\\vercel\\contracts-1440.png"
+    },
+    {
+      "route": "stores",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "rows": 4,
+      "page_overflow": false,
+      "screenshot": "docs\\qa\\vercel\\stores-1440.png"
+    },
+    {
+      "route": "vehicles",
+      "viewport": {
+        "width": 1440,
+        "height": 1000
+      },
+      "rows": 10,
+      "page_overflow": false,
+      "screenshot": "docs\\qa\\vercel\\vehicles-1440.png"
+    },
+    {
+      "route": "staff",
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "rows": 10,
+      "page_overflow": false,
+      "screenshot": "docs\\qa\\vercel\\staff-375.png"
+    },
+    {
+      "route": "customers",
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "rows": 10,
+      "page_overflow": false,
+      "screenshot": "docs\\qa\\vercel\\customers-375.png"
+    },
+    {
+      "route": "contracts",
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "rows": 10,
+      "page_overflow": false,
+      "screenshot": "docs\\qa\\vercel\\contracts-375.png"
+    },
+    {
+      "route": "stores",
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "rows": 4,
+      "page_overflow": false,
+      "screenshot": "docs\\qa\\vercel\\stores-375.png"
+    },
+    {
+      "route": "vehicles",
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "rows": 10,
+      "page_overflow": false,
+      "screenshot": "docs\\qa\\vercel\\vehicles-375.png"
+    }
+  ],
+  "browser_errors": []
+}

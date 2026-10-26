@@ -1,0 +1,10 @@
+{
+  "source": "demo",
+  "passed": 3,
+  "checks": [
+    "incomplete draft saves, survives full reload, reopens and updates the same record; detail printing stays in the new website",
+    "375px list/modal have no page overflow; draft save is accessible; keyboard focus stays inside the modal and Escape closes it",
+    "no browser JavaScript errors"
+  ],
+  "browser_errors": []
+}

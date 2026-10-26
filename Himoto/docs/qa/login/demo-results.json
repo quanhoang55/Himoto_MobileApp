@@ -1,0 +1,11 @@
+{
+  "source": "demo",
+  "passed": 4,
+  "checks": [
+    "home opens login with the existing HIMOTO image loaded",
+    "demo login is clearly marked; demo entry and Log navigation work",
+    "tablet/mobile form has no horizontal overflow and supports keyboard access",
+    "no browser JavaScript errors"
+  ],
+  "browser_errors": []
+}

@@ -1,0 +1,19 @@
+{
+  "passed": 11,
+  "checks": [
+    "branch dropdown scopes staff by ID and clears old staff and vehicle choices",
+    "automatic exact identity lookup fills the full profile and clears stale identity immediately",
+    "late lookup results cannot overwrite a newer identity",
+    "lookup failures expose retry and never become a missing customer",
+    "unknown CCCD opens a validated customer popup, blocks duplicates, and autofills without navigation",
+    "legacy template retains every appendix term, receipt, signature, mapped identity and vehicle data",
+    "actual print handler isolates the document and produces one A4 landscape PDF with no form chrome",
+    "multiple vehicles create the legacy appendix on a second A4 landscape page",
+    "inline customer appears in the shared customer table and row printing prefills existing contract data",
+    "375px form and nested popup contain keyboard focus, preserve URL and scroll the paper without page overflow",
+    "demo flow has no backend writes, rental mutations or uncaught browser errors"
+  ],
+  "browser_errors": [],
+  "api_writes": [],
+  "url": "http://localhost:3001"
+}

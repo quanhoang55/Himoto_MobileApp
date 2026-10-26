@@ -1,0 +1,287 @@
+'use client';
+
+import { ReactNode, useCallback, useEffect, useState } from 'react';
+import { BatteryCharging, Bike, CalendarPlus, Eye, LoaderCircle, MessageCircle, Pencil, Plus, Printer, RotateCcw, Wallet } from 'lucide-react';
+import { Dialog } from './Dialog';
+import { CashflowColumns, cashflowTotals } from './CashflowColumns';
+import { useManagement } from './ManagementProvider';
+import { ContractSectionTabs } from '@/components/contracts/ContractSectionTabs';
+import { contractStaffStoreId, createContractDraft } from '@/lib/management/contract-document';
+import { CHANGE_LABELS, ContractHistory, loadContractHistory } from '@/lib/management/contract-history';
+import { paymentMethodLabel, type PaymentPurpose } from '@/lib/management/contract-payments';
+import { ManagementRow } from '@/lib/management/types';
+import { MANAGEMENT_CONFIG, optionLabel } from '@/lib/management/config';
+import { formatDate, formatDateTime, formatMoney } from '@/lib/formatters';
+import { isRemindableContract } from '@/lib/management/debt-reminders';
+import { MobileDetailsCard } from './MobileDetailsCard';
+import { SavedRecordPhotos } from './RecordPhotoFields';
+import { CUSTOMER_PHOTO_SLOTS } from '@/lib/management/record-photos';
+import { contractEvidenceSlots } from '@/lib/management/contract-photos';
+import { ContractBatteryLinks } from './ContractBatteryLinks';
+import { ContractPhotoGallery } from './ContractTransactionPhotos';
+import { ContractTelegramPanel } from './ContractTelegramPanel';
+import { ReservationNoShowDialog } from './ReservationNoShowDialog';
+import { ContractLifecyclePanel } from './ContractLifecyclePanel';
+import { canEditIssuedContract } from '@/lib/management/contract-profile';
+import { ContractEditDialog } from '@/components/contracts/ContractEditDialog';
+import { BadDebtRecoveryDialog } from './BadDebtRecoveryDialog';
+import { loadContractLifecycle,type ContractLifecycleContext } from '@/lib/management/contract-lifecycle';
+
+const SECTIONS = [
+  { id: 'vehicle', label: 'Thông tin phương tiện' },
+  { id: 'contract', label: 'Hợp đồng' },
+  { id: 'lifecycle', label: 'Nợ xấu / bảo lưu' },
+  { id: 'customer', label: 'Khách hàng (Bên B)' },
+  { id: 'payment', label: 'Chi phí' },
+  { id: 'battery', label: 'Pin / sạc' },
+  { id: 'signing', label: 'Ký kết & ghi chú' },
+  { id: 'changes', label: 'Lịch sử chỉnh sửa' },
+  { id: 'cashflow', label: 'Lịch sử thu chi' },
+  { id: 'photos', label: 'Ảnh thuê / trả xe' },
+  { id: 'telegram', label: 'Telegram' },
+] as const;
+type DetailSection = (typeof SECTIONS)[number]['id'];
+const text = (value: unknown) => value == null || value === '' ? '—' : String(value);
+const money = (value: unknown) => value == null || value === '' || !Number.isFinite(Number(value)) ? '—' : formatMoney(Number(value));
+const dateTime = (value: string) => value ? formatDateTime(value) : '—';
+const date = (value: string) => {
+  if (!value) return '—';
+  const formatted = formatDate(value);
+  return formatted === '--' ? value : formatted;
+};
+const millis = (value: unknown) => {
+  const raw = value == null ? '' : String(value);
+  return raw ? new Date(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(raw) ? `${raw}:00+07:00` : raw).getTime() : NaN;
+};
+function rentalDays(start: unknown, end: unknown) {
+  const from = millis(start), to = millis(end);
+  if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) return '—';
+  const minutes = Math.round((to - from) / 60_000);
+  const days = Math.floor(minutes / 1440), hours = Math.ceil((minutes % 1440) / 60);
+  return hours === 24 ? `${days + 1} ngày` : `${days} ngày${hours ? ` ${hours} giờ` : ''}`;
+}
+
+export type ContractVersionPrint = { end_date: string | null; total_amount: number | null; paid_amount: number | null };
+
+export function ContractDetail({ row, onClose, onQr,onReminder,onPrint,onEditDraft,onHandover, onPrintVersion, onPayment, onReturn, onRenew, onVehicleChange, onBatteryRent }: { row: ManagementRow; onClose: () => void; onQr?:()=>void; onReminder?:()=>void; onPrint: () => void;onEditDraft?:()=>void;onHandover?:()=>void; onPrintVersion?: (version: ContractVersionPrint) => void; onPayment?: (purpose?: PaymentPurpose) => void; onReturn?: () => void; onRenew?: () => void; onVehicleChange?: () => void; onBatteryRent?: () => void }) {
+  const { dataset, source, can, accessUser, invalidateData, notify } = useManagement();
+  const [editing,setEditing]=useState(false);
+  const [lifecycleOverride,setLifecycleOverride]=useState<Partial<ManagementRow>>({});
+  const [recoveryOpen,setRecoveryOpen]=useState(false),[lifecycleReload,setLifecycleReload]=useState(0);
+  const applyLifecycle=useCallback((context:ContractLifecycleContext)=>{
+    setLifecycleOverride({status:context.status,draft_revision:context.revision,billing_plan_json:context.plan?JSON.stringify(context.plan):'',end_date:context.end_at||undefined,total_amount:context.total_amount??undefined,paid_amount:context.paid_amount??undefined});
+  },[]);
+  const originalRow=row;
+  row={...originalRow,...lifecycleOverride};
+  useEffect(()=>setLifecycleOverride({}),[originalRow.id,originalRow.draft_revision,originalRow.status]);
+  const [section, setSection] = useState<DetailSection>('vehicle');
+  const [viewingVersion, setViewingVersion] = useState('');
+  const [history, setHistory] = useState<ContractHistory | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
+  const wantsHistory = section === 'changes' || section === 'cashflow';
+  const fetchHistory = useCallback((signal?: AbortSignal) => {
+    setHistoryLoading(true); setHistoryError('');
+    loadContractHistory(row.id, signal).then(value => { if (!signal?.aborted) setHistory(value); }).catch(cause => {
+      if (!signal?.aborted) setHistoryError(cause instanceof Error ? cause.message : 'Không tải được lịch sử hợp đồng.');
+    }).finally(() => { if (!signal?.aborted) setHistoryLoading(false); });
+  }, [row.id]);
+  useEffect(() => {
+    if (!wantsHistory || history || source !== 'api') return;
+    const controller = new AbortController();
+    fetchHistory(controller.signal);
+    return () => controller.abort();
+  }, [wantsHistory, history, source, fetchHistory]);
+  const draft = createContractDraft(dataset || { stores: [], staff: [], customers: [], contracts: [], vehicles: [] }, 'all', row);
+  const savedDraft = Boolean(row.draft_json);
+  const pricing = savedDraft ? draft : row;
+  const legacyVehicles = JSON.parse(String(row.legacy_items_json || '[]')) as Record<string, unknown>[];
+  const liveVehicles = JSON.parse(String(row.vehicles_json || '[]')) as Record<string, unknown>[];
+  const sourceVehicles = row.status !== 'draft' && liveVehicles.length ? liveVehicles : legacyVehicles.length ? legacyVehicles : liveVehicles;
+  const representative = dataset?.staff.find(person => String(person.id) === draft.staff_id);
+  const store = dataset?.stores.find(store => String(store.id) === draft.store_id);
+  const canOperateRental = ['renting', 'overdue', 'wait_payment'].includes(row.status);
+  const canRentBattery = can('contracts.draft') && Boolean(onBatteryRent) && !['draft', 'cancelled'].includes(row.status);
+  const [noShow,setNoShow]=useState(false);
+  const canPay = row.status !== 'draft' && row.status !== 'cancelled' && Boolean(onPayment);
+  const depositHeld = Math.max((Number(row.deposit_paid) || 0) - (Number(row.deposit_refunded) || 0), 0);
+  const remaining = row.total_amount == null || row.paid_amount == null ? null : Math.max(Number(row.total_amount) - Number(row.paid_amount), 0);
+  function fields(values: [string, ReactNode][]) {
+    return <dl className="mg-contract-detail-grid">{values.map(([label, value]) => <div key={label}
+      className={['Địa chỉ thường trú / tạm trú', 'Thông tin người thân', 'Ghi chú hợp đồng', 'Cảnh báo', 'Tài sản thế chấp / Đặt cọc tài sản'].includes(label) ? 'mg-field-wide' : undefined}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>;
+  }
+  function historyState(empty: boolean, emptyText: string) {
+    if (source !== 'api') return <p className="mg-contract-history-state">Lịch sử chỉ có khi kết nối dữ liệu Supabase.</p>;
+    if (historyLoading && !history) return <p className="mg-contract-history-state" role="status"><LoaderCircle size={16} className="mg-spin" /> Đang tải lịch sử…</p>;
+    if (historyError) return <p className="mg-contract-history-state mg-field-error" role="alert">{historyError}</p>;
+    if (history && empty) return <p className="mg-contract-history-state">{emptyText}</p>;
+    return null;
+  }
+  const refreshButton = source === 'api' && <button type="button" className="mg-button" disabled={historyLoading} onClick={() => fetchHistory()}>
+    {historyLoading ? <LoaderCircle size={15} className="mg-spin" /> : <RotateCcw size={15} />}Làm mới</button>;
+  const { income: incomeTotal, expense: expenseTotal } = cashflowTotals(history?.cashflow || []);
+  const versionTimes = (history?.changes || []).filter(change => change.kind === 'created' || change.version)
+    .map(change => new Date(change.at).getTime()).sort((a, b) => a - b);
+  function panel(id: DetailSection, title: string, children: ReactNode) {
+    return <section id={`contract-detail-panel-${id}`} role="tabpanel" aria-labelledby={`contract-detail-tab-${id}`}
+      hidden={section !== id} className="mg-contract-panel"><h3 className="mg-contract-section-title">{title}</h3>{children}</section>;
+  }
+  return <Dialog title={`Chi tiết hợp đồng: ${row.code}`} subtitle={optionLabel(MANAGEMENT_CONFIG.contracts, 'status', row.status)}
+    className="mg-contract-detail" onClose={onClose}>
+    <div className="mg-dialog-body">
+      <ContractSectionTabs prefix="contract-detail" sections={SECTIONS} active={section} onChange={setSection} />
+      {panel('vehicle', 'Thông tin phương tiện', <>
+        {fields([['Thuê lúc', dateTime(draft.start_date)], ['Hẹn trả', dateTime(draft.end_date)]])}
+        {draft.vehicles.map((vehicle, index) => <div className="mg-composer-vehicle" key={index}>
+          <div className="mg-composer-vehicle-header"><strong>Thông tin xe thuê số {index + 1}</strong></div>
+          {fields([['Tên xe', text(vehicle.name)], ['Biển số', text(vehicle.license)], ['Cơ sở quản lý xe lúc lập hợp đồng', text(vehicle.stock_store_name)], ['Màu xe', text(vehicle.color)],
+            ['Loại xe', text(vehicle.type_text)], ['Hãng xe', text(vehicle.brand)], ['Đời xe', text(vehicle.year)],
+            ['Tên người lái', text(vehicle.driver_name)], ['Số GP lái xe', text(vehicle.driver_license_number)],
+            ['Ngày cấp GPLX', date(vehicle.driver_license_issued_on)],
+            ['Số mũ mượn', text(savedDraft ? vehicle.borrow_hats : sourceVehicles[index]?.borrow_hats)],
+            ['Số áo mưa', text(savedDraft ? vehicle.borrow_raincoats : sourceVehicles[index]?.borrow_raincoats)]])}
+        </div>)}
+      </>)}
+      {panel('contract', 'Thông tin hợp đồng & Pháp lý', fields([
+        ['Mã hợp đồng / Số HĐ giấy', row.code], ['Trạng thái hợp đồng', optionLabel(MANAGEMENT_CONFIG.contracts, 'status', row.status)],
+        ['Loại hợp đồng', draft.contract_type_name || String(row.contract_type_name || '') || (row.rental_type ? optionLabel(MANAGEMENT_CONFIG.contracts, 'rental_type', String(row.rental_type)) : '—')],
+        ...(row.rental_type === 'ownership' ? [['Thời hạn sở hữu',optionLabel(MANAGEMENT_CONFIG.contracts,'ownership_term_months',String(row.ownership_term_months || 'custom'))] as [string,string]] : []),
+        ['Ngày ký hợp đồng', date(draft.signed_on)], ['Ngày tạo hợp đồng', date(draft.created_on || String(row.created_at || ''))],
+        ['Nguồn khách', text(draft.customer_source)], ['Liên kết nguồn khách', text(draft.customer_source_url)],
+      ]))}
+      {panel('customer', 'Thông tin khách hàng (Bên B)', fields([
+        ['Cửa hàng xe', text(dataset?.stores.find(store => String(store.id) === contractStaffStoreId(draft))?.name)],
+        ['Cơ sở nguồn khách / doanh thu', text(store?.name || row.store_name)], ['Đại diện ủy quyền Bên A (Nhân viên làm hợp đồng)', text(draft.staff_name || representative?.name || row.staff_name)],
+        ['Tên khách hàng', text(draft.customer.name)], ['SĐT', text(draft.customer.phone)],
+        ['Số CMTND/CCCD', text(draft.customer.id_card)], ['Ngày cấp CCCD', date(draft.customer.id_card_issued_on)],
+        ['Nơi cấp CCCD', text(draft.customer.id_card_issued_by)], ['Số giấy phép lái xe', text(draft.customer.driver_license_number)],
+        ['Ngày cấp GPLX', date(draft.customer.driver_license_issued_on)], ['Nơi ở hiện tại', text(draft.customer.address)],
+        ['Người thân 1', text(draft.relatives[0] ? `${draft.relatives[0].name}${draft.relatives[0].relationship ? ` (${draft.relatives[0].relationship})` : ''}${draft.relatives[0].phone ? `: ${draft.relatives[0].phone}` : ''}` : '')],
+        ['Người thân 2', text(draft.relatives[1] ? `${draft.relatives[1].name}${draft.relatives[1].relationship ? ` (${draft.relatives[1].relationship})` : ''}${draft.relatives[1].phone ? `: ${draft.relatives[1].phone}` : ''}` : '')],
+      ]))}
+      {panel('payment', 'Chi phí', <>
+        <div className="mg-contract-cost-section"><h3>Thời gian thuê</h3>{fields([
+          ['Thuê lúc', dateTime(draft.start_date)], ['Hẹn trả', dateTime(draft.end_date)], ['Số ngày thuê', rentalDays(draft.start_date, draft.end_date)],
+        ])}
+          {sourceVehicles.some(vehicle => vehicle.rent_at) && <div className="mg-mobile-records"><ul className="mg-mobile-card-list">{sourceVehicles.map((vehicle, index) => <MobileDetailsCard key={index} title={text(vehicle.license || vehicle.name)}
+            summary={<><span>{rentalDays(vehicle.rent_at, vehicle.completed_at || vehicle.return_at)}</span><span>{vehicle.completed_at ? 'Đã trả' : 'Đang thuê'}</span></>}
+            fields={[["Thuê lúc", dateTime(String(vehicle.rent_at || ''))], ["Hẹn trả / Đã trả", dateTime(String(vehicle.completed_at || vehicle.return_at || ''))], ["Số ngày thuê", rentalDays(vehicle.rent_at, vehicle.completed_at || vehicle.return_at)]]} />)}</ul></div>}
+          {sourceVehicles.some(vehicle => vehicle.rent_at) && <table className="mg-contract-days mg-desktop-records">
+            <thead><tr><th>Xe</th><th>Thuê lúc</th><th>Hẹn trả / Đã trả</th><th>Số ngày thuê</th></tr></thead>
+            <tbody>{sourceVehicles.map((vehicle, index) => {
+              const end = vehicle.completed_at || vehicle.return_at;
+              return <tr key={index}><td>{text(vehicle.license || vehicle.name)}</td><td>{dateTime(String(vehicle.rent_at || ''))}</td>
+                <td>{dateTime(String(end || ''))}{vehicle.completed_at ? ' (đã trả)' : ''}</td><td>{rentalDays(vehicle.rent_at, end)}</td></tr>;
+            })}</tbody></table>}
+        </div>
+        <div className="mg-contract-cost-section"><h3>Tiền cọc (tách riêng, không trừ vào tiền thuê)</h3>{fields([
+          ['Số tiền đặt cọc', money(pricing.deposit_amount)], ['Hình thức đặt cọc', text(pricing.deposit_payment_method)],
+          ['Cọc đã thu', money(row.deposit_paid)], ['Đã trả cọc', money(row.deposit_refunded)],
+          ['Cọc đang giữ', money(Math.max((Number(row.deposit_paid) || 0) - (Number(row.deposit_refunded) || 0), 0))],
+        ])}</div>
+        <div className="mg-contract-cost-section"><h3>Phí thuê xe</h3>{fields([
+          ['Gói thuê', text(pricing.package_name)], ['Đơn giá áp dụng', money(pricing.unit_price)],
+          ['Tổng phí thuê xe', money(row.total_amount ?? pricing.total_amount)], ['Phát sinh trả xe (+ trễ / − trả sớm)', money(row.return_adjustment_amount)],
+          ['Đã thu tiền thuê', money(row.paid_amount)], ['Còn thiếu tiền thuê', row.total_amount == null || row.paid_amount == null ? '—' : money(Math.max(Number(row.total_amount) - Number(row.paid_amount), 0))],
+          ['Hình thức thanh toán', text(pricing.payment_method)],
+        ])}</div>
+        {row.billing_plan_json && <div className="mg-contract-cost-section"><h3>Lịch đóng tiền thuê sở hữu</h3>{fields([
+          ['Tiền thuê theo lịch (cọc riêng)', money(row.billing_expected_total)],
+          ['Đã đóng đủ kỳ', `${row.billing_paid_periods ?? '—'} / ${row.billing_period_count ?? '—'}`],
+          ['Ngày hẹn cần đóng tiếp theo', row.billing_next_due_at ? dateTime(String(row.billing_next_due_at)) : 'Không còn khoản đến hẹn'],
+          ['Tiền đến hạn còn thiếu', money(row.billing_due_amount)],
+        ])}</div>}
+        {draft.extra_charges && draft.extra_charges.length>0 && <div className="mg-contract-cost-section"><h3>Phí khác trong hợp đồng (đã tính trong tổng phí)</h3>{fields(draft.extra_charges.filter(item=>Number(item.amount)>0).map(item=>[item.name,item.method ? `${money(item.amount)} · ${paymentMethodLabel(item.method)}` : money(item.amount)]))}</div>}
+        {source === 'api' && <SavedRecordPhotos entity="contracts" recordId={row.id} slots={contractEvidenceSlots('rental')} title="Ảnh hợp đồng đã ký & bill chuyển khoản" />}
+      </>)}
+      {panel('battery', 'Hợp đồng pin / sạc liên kết', section === 'battery' && (source === 'api' && row.status !== 'draft'
+        ? <ContractBatteryLinks orderId={row.id} onCreate={canRentBattery ? onBatteryRent : undefined} />
+        : <p>Phát hành hợp đồng xe trước khi liên kết hợp đồng pin / sạc.</p>))}
+      {panel('signing', 'Ký kết & Ghi chú', <>
+        {fields([
+          ['Tài sản thế chấp / Đặt cọc tài sản', text(draft.collateral_description)],
+          ['Người ký Bên A (Himoto)', text(draft.staff_name || representative?.name || row.staff_name)], ['Người ký Bên B (Khách thuê)', text(draft.customer.name)],
+          ['Ghi chú hợp đồng', text(row.notes)], ['Cảnh báo', text(draft.customer.warning_note)],
+        ])}
+        {source === 'api' && <SavedRecordPhotos entity="contracts" recordId={row.id} slots={contractEvidenceSlots('rental')} title="Ảnh hợp đồng đã ký & bill chuyển khoản" />}
+      </>)}
+      {panel('changes', 'Danh sách chỉnh sửa hợp đồng', <>
+        <div className="mg-contract-history-toolbar"><p>Ghi nhận tạo hợp đồng, gia hạn, thu thêm, đổi xe và trả xe.</p>{refreshButton}</div>
+        {historyState(!history?.changes.length, 'Chưa có lần chỉnh sửa nào.')}
+        {history && history.changes.length > 0 && <ol className="mg-contract-changes">{history.changes.map(change => {
+          const printable = change.kind === 'created' || change.kind === 'swap' || Boolean(change.version);
+          const version: ContractVersionPrint = change.version
+            ? { end_date: change.version.return_at, total_amount: change.version.total, paid_amount: change.version.paid }
+            : { end_date: null, total_amount: null, paid_amount: null };
+          const open = viewingVersion === change.id;
+          const at = new Date(change.at).getTime();
+          const until = versionTimes.find(time => time > at) ?? Infinity;
+          const receipts = history.cashflow.filter(item => new Date(item.at).getTime() < until);
+          return <li key={change.id} className={`is-${change.kind}`}>
+            <span className="mg-contract-change-kind">{CHANGE_LABELS[change.kind]}</span>
+            <div><strong>{change.title}{change.amount ? ` · ${change.amount < 0 ? '−' : ''}${formatMoney(Math.abs(change.amount))}` : ''}</strong>
+              {change.detail && <p>{change.detail}</p>}
+              <small>{dateTime(change.at)} · {change.actor}</small>
+              {open && <div className="mg-contract-version-view">
+                {fields([['Phiên bản', change.version?.label || 'Hợp đồng hiện tại'], ['Thuê lúc', dateTime(draft.start_date)],
+                  ['Hẹn trả', change.version?.return_at ? dateTime(change.version.return_at) : dateTime(draft.end_date)],
+                  ['Tiền thuê', change.version ? money(change.version.total) : money(row.total_amount)],
+                  ['Số ngày thuê', rentalDays(draft.start_date, change.version?.return_at || draft.end_date)],
+                  ['Xe', text(draft.vehicles.map(vehicle => vehicle.license || vehicle.name).filter(Boolean).join(', '))]])}
+                <h4>Lịch sử thanh toán đến thời điểm này</h4>
+                {receipts.length ? <CashflowColumns items={receipts} /> : <p className="mg-contract-history-state">Chưa có phiếu thu / chi.</p>}
+              </div>}
+            </div>
+            {printable && <div className="mg-contract-change-actions">
+              {change.kind !== 'swap' && <button type="button" className="mg-button" aria-expanded={open} onClick={() => setViewingVersion(open ? '' : change.id)}><Eye size={14} />{open ? 'Ẩn' : 'Xem'}</button>}
+              <button type="button" className="mg-button" onClick={() => change.version && onPrintVersion ? onPrintVersion(version) : onPrint()}><Printer size={14} />In</button>
+            </div>}
+          </li>;
+        })}</ol>}
+      </>)}
+      {panel('cashflow', 'Lịch sử thu chi', <>
+        <div className="mg-contract-history-toolbar"><p>Tất cả phiếu thu / chi gắn với hợp đồng trong Sổ quỹ / Sổ két. Nút điền sổ quỹ mở phiếu đã gắn hợp đồng, nghiệp vụ và số tiền theo cấu trúc.</p><div>
+          {onQr && row.status !== 'cancelled' && <button type="button" className="mg-button" onClick={onQr}><Wallet size={15} />Nhập phiếu chi</button>}
+          {canPay && <button type="button" className="mg-button mg-button-primary" onClick={() => onPayment?.(remaining && remaining > 0 ? 'debt' : 'extra')}><Plus size={15} />Điền phiếu thu</button>}
+          {refreshButton}</div></div>
+        {canPay && <div className="mg-cashbook-autofill-actions">
+          <button type="button" className="mg-button" disabled={remaining === 0} onClick={() => onPayment?.('debt')}><Wallet size={15} />Thu công nợ{remaining && remaining > 0 ? ` (${formatMoney(remaining)})` : ''}</button>
+          {canOperateRental && <button type="button" className="mg-button" onClick={() => onPayment?.('renewal')}><Wallet size={15} />Thu gia hạn</button>}
+          <button type="button" className="mg-button" onClick={() => onPayment?.('extra')}><Wallet size={15} />Thu thêm</button>
+          <button type="button" className="mg-button" disabled={depositHeld <= 0} onClick={() => onPayment?.('deposit_refund')}><Wallet size={15} />Trả cọc{depositHeld > 0 ? ` (${formatMoney(depositHeld)})` : ''}</button>
+        </div>}
+        {history && history.cashflow.length > 0 && <dl className="mg-payment-totals"><div><dt>Tổng thu (đã duyệt)</dt><dd>{formatMoney(incomeTotal)}</dd></div>
+          <div><dt>Tổng chi (đã duyệt)</dt><dd>{formatMoney(expenseTotal)}</dd></div><div><dt>Chênh lệch</dt><dd>{formatMoney(incomeTotal - expenseTotal)}</dd></div></dl>}
+        {historyState(!history?.cashflow.length, 'Chưa có phiếu thu / chi nào cho hợp đồng này.')}
+        {history && history.cashflow.length > 0 && <CashflowColumns items={history.cashflow} />}
+      </>)}
+    {panel('lifecycle','Nợ xấu / bảo lưu',section==='lifecycle'&&source==='api'&&row.status!=='draft'&&<ContractLifecyclePanel id={row.id} reloadKey={lifecycleReload} onChanged={applyLifecycle} onRecover={()=>setRecoveryOpen(true)} onPayment={onPayment}/>)}
+    {panel('photos','Ảnh thuê / trả xe',section==='photos'&&<ContractPhotoGallery id={row.id}/>)}
+    {panel('telegram','Gửi thông tin và ảnh vào nhóm Telegram',section==='telegram'&&source==='api'&&(row.status==='draft'?<p role="status">Hợp đồng đang lưu nháp. Bấm Tiếp tục hoàn tất hợp đồng, kiểm tra thanh toán rồi Xác nhận lưu chính thức. Sau khi phát hành mới gửi được thông tin và ảnh lên Telegram.</p>:<>{row.status==='cancelled'&&<p>Hợp đồng đã hủy. Có thể xem lịch sử và thu hồi tin đã gửi.</p>}<ContractTelegramPanel id={row.id}/></>))}
+    {source === 'api' && (section === 'vehicle' || section === 'customer') && <>
+      {section === 'vehicle' && <SavedRecordPhotos entity="contracts" recordId={row.id} slots={draft.vehicles.filter(vehicle => vehicle.id).map(vehicle => ({ key: `plate-${vehicle.id}`, label: `Biển số ${vehicle.license || vehicle.name}` }))} title="Ảnh biển số xe" />}
+      {section === 'customer' && draft.customer_id && <SavedRecordPhotos entity="customers" recordId={draft.customer_id} slots={CUSTOMER_PHOTO_SLOTS} title="Ảnh CCCD" />}
+    </>}
+    </div>
+    {noShow&&<ReservationNoShowDialog orderId={row.id} onClose={()=>setNoShow(false)} onDone={onClose}/>}
+    {recoveryOpen&&<BadDebtRecoveryDialog id={row.id} code={row.code} onClose={()=>setRecoveryOpen(false)} onRecovered={()=>{setLifecycleReload(value=>value+1);void loadContractLifecycle(row.id).then(applyLifecycle).catch(()=>{});}}/>}
+    <div className="mg-dialog-footer">{row.status==='deposit_contract'&&can('contracts.finalize')&&<><button type="button" className="mg-button" onClick={onPrint}>Bổ sung hồ sơ hợp đồng cọc</button>{onHandover&&<button type="button" className="mg-button mg-button-primary" onClick={onHandover}><Bike size={16}/>Giao xe đã đặt cọc</button>}<button type="button" className="mg-button" onClick={()=>setNoShow(true)}>Khách không đến nhận xe</button></>}<button type="button" className="mg-button" onClick={onClose}>Đóng</button>
+      {editing&&<ContractEditDialog row={row} onClose={()=>setEditing(false)} onSaved={code=>{setEditing(false);invalidateData(['contracts']);notify(`Đã lưu hợp đồng ${code}.`);onClose();}}/>}
+      {source==='api'&&row.status!=='draft'&&canEditIssuedContract(accessUser,row.store_id)&&<button type="button" className="mg-button" onClick={()=>setEditing(true)}><Pencil size={16}/>Sửa hợp đồng</button>}
+      {row.status==='draft'&&can('contracts.draft')&&onEditDraft&&<button type="button" className="mg-button mg-button-primary" onClick={onEditDraft}>Tiếp tục hoàn tất hợp đồng</button>}
+      {source==='api'&&!['draft','cancelled'].includes(row.status)&&<button type="button" className="mg-button" onClick={()=>setSection('telegram')}><MessageCircle size={15}/>Gửi Telegram</button>}
+      {onReminder&&isRemindableContract(row)&&<button type="button" className="mg-button" onClick={onReminder}><MessageCircle size={15}/>Nhắc nợ</button>}
+      {canOperateRental && <>
+        {can('contracts.return')&&onReturn&&<button type="button" className="mg-button" onClick={onReturn}><RotateCcw size={15} />Trả xe</button>}
+        {can('contracts.renew')&&onRenew&&!row.billing_plan_json && <button type="button" className="mg-button" onClick={onRenew}><CalendarPlus size={15} />Gia hạn</button>}
+        {can('contracts.return')&&onVehicleChange&&<button type="button" className="mg-button" onClick={onVehicleChange}><Bike size={15} />Đổi xe</button>}
+      </>}
+      {row.status==='completed'&&can('contracts.return')&&onReturn&&<button type="button" className="mg-button" onClick={onReturn}>Bổ sung ảnh trả xe</button>}
+      {row.status==='bad_debt'&&can('contracts.return')&&<button type="button" className="mg-button" onClick={()=>setRecoveryOpen(true)}><RotateCcw size={15}/>Thu hồi xe nợ xấu</button>}
+      {source==='api'&&!['draft','cancelled'].includes(row.status)&&<button type="button" className="mg-button" onClick={()=>setSection('lifecycle')}>Trạng thái &amp; xử lý</button>}
+      {canRentBattery && <button type="button" className="mg-button" onClick={onBatteryRent}><BatteryCharging size={15} />Thuê pin / sạc</button>}
+      {canPay && <button type="button" className="mg-button" onClick={() => onPayment?.(remaining && remaining > 0 ? 'debt' : depositHeld > 0 ? 'deposit_refund' : 'extra')}><Wallet size={15} />Điền sổ quỹ</button>}
+      {onQr && row.status !== 'cancelled' && <button type="button" className="mg-button" onClick={onQr}><Wallet size={15} />Nhập phiếu chi</button>}
+      <button type="button" className="mg-button mg-button-primary" onClick={onPrint}><Printer size={16} />In hợp đồng</button></div>
+  </Dialog>;
+}

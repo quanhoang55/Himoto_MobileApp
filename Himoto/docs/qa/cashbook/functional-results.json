@@ -1,0 +1,14 @@
+{
+  "passed": 7,
+  "checks": [
+    "both tables render simultaneously with the exact seven columns and correct voucher direction, creator, date and time",
+    "pagination, page size and sorting are independent for income and expense tables, with accessible sorting state",
+    "shared ID/reason/content search works without Vietnamese accents and handles empty results in both tables",
+    "inclusive dates, exact creator IDs and shared branch filters combine; CSV exports both filtered groups with seven fields and rejects reversed dates",
+    "loading hides old rows and counts; errors render in both tables and retry restores the data without false success",
+    "new navigation works; 375/768/1024px layouts keep both tables, permit horizontal table scrolling and avoid page overflow",
+    "no browser JavaScript errors or financial/rental/API writes"
+  ],
+  "browser_errors": [],
+  "api_writes": []
+}

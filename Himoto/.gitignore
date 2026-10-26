@@ -1,0 +1,17 @@
+node_modules/
+.next/
+*.tsbuildinfo
+next-env.d.ts
+.env*
+!.env.example
+
+.vercel
+
+# Local customer/vehicle workbooks contain operational data.
+/excel-import/
+/.backups/
+# Local operational workbooks must not be published.
+/*.xlsx
+__pycache__/
+*.pyc
+/docs/HANDOFF-*.md

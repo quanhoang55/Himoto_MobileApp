@@ -1,0 +1,148 @@
+const assert = require('node:assert/strict'), path = require('node:path');
+const { NextRequest } = require('next/server');
+const { load, root } = require('./lib/load-typescript.cjs');
+
+async function run() {
+  require('@next/env').loadEnvConfig(process.cwd(), false, { info() {}, error() {} });
+  const { CUSTOMER_SEARCH_SQL } = load(path.join(root, 'lib/server/customer-search'));
+  const { saveDatabaseDraft } = load(path.join(root, 'lib/server/contract-drafts'));
+  const { finalizeContractDraft } = load(path.join(root, 'lib/server/contract-finalize'));
+  const { createContractDraft, customerDetails, vehicleDetails } = load(path.join(root, 'lib/management/contract-document'));
+  const { mapApiRow } = load(path.join(root, 'lib/management/repository'));
+  const session = load(path.join(root, 'lib/server/management-session'));
+  const { himotoPool: db, ownerDatabase } = load(path.join(root, 'lib/server/himoto-database'));
+  const descriptors = Object.getOwnPropertyDescriptors(db), ownerDescriptors = Object.getOwnPropertyDescriptors(ownerDatabase);
+  const auth = session.protectDatabaseRequest, userFromSession = session.userFromSession,readSessionUser=session.readSessionUser;
+  const branchUser = { id: 151, access_role: 'branch_staff', store_id: 23, scope_all: false, permissions: ['customers.read'] };
+  const checks = [], queries = [];
+  try {
+    session.protectDatabaseRequest = async () => null;
+    session.userFromSession = async token => token === 'qa-session' ? branchUser : null;
+    session.readSessionUser=session.userFromSession;
+    Object.defineProperty(db, 'query', { configurable: true, value: async () => { throw Error('Exact customer lookup must not use the branch-scoped pool'); } });
+    Object.defineProperty(ownerDatabase, 'query', { configurable: true, value: async (sql, values) => { queries.push({ sql, values }); return { rows: [] }; } });
+    const route = load(path.join(root, 'app/api/auth/[...path]/route'));
+    const search = (query, token = 'qa-session') => route.GET(new NextRequest(`http://localhost/api/auth/customers/search?${query}`, { headers: { Cookie: `himoto_management_session=${token}` } }), { params: Promise.resolve({ path: ['customers','search'] }) });
+    for (const suffix of ['', '&store_id=23', '&store_id=31']) {
+      const response = await search(`query=090.000.0011${suffix}`);
+      assert.equal(response.status, 200); assert.deepEqual(queries.at(-1).values, ['0900000011']);
+      assert.equal(queries.at(-1).sql, CUSTOMER_SEARCH_SQL);
+    }
+    const identitySearch = query => route.GET(new NextRequest(`http://localhost/api/auth/customers/search-by-id-card?${query}`, { headers: { Cookie: 'himoto_management_session=qa-session' } }), { params: Promise.resolve({ path: ['customers','search-by-id-card'] }) });
+    assert.equal((await identitySearch('id_card=001234567890')).status, 200);
+    assert.deepEqual(queries.at(-1).values, ['001234567890']);
+    const count = queries.length;
+    assert.equal((await (await identitySearch('id_card=')).json()).data, null); assert.equal(queries.length, count);
+    assert.deepEqual((await (await search('query=123')).json()).data, []); assert.equal(queries.length, count);
+    assert.equal((await search('query=0900000011', '')).status, 401); assert.equal(queries.length, count);
+    branchUser.permissions = [];
+    assert.equal((await search('query=0900000011')).status, 403); assert.equal(queries.length, count);
+    branchUser.permissions = ['customers.read'];
+    checks.push('real access wrapper authenticates branch staff, requires customers.read, ignores branch filters and uses the global connection only for exact lookup');
+
+    if (process.argv.includes('--live-temp')) {
+      Object.defineProperties(db, descriptors);
+      Object.defineProperties(ownerDatabase, ownerDescriptors);
+      const c = await db.connect();
+      const tables = ['customers','orders','order_vehicle_details','stores','staff_profiles','vehicles','transactions','users','banks','cash','management_contract_payments'];
+      const proxy = { query: (sql, values) => {
+        for (const table of tables) sql = sql.replaceAll(`himoto.${table}`, `pg_temp.qa_global_${table}`);
+        assert(!sql.includes('himoto.'), 'Every business query must use TEMP tables');
+        return c.query(sql, values);
+      } };
+      const searchRows = phone => proxy.query(CUSTOMER_SEARCH_SQL, [phone]).then(result => result.rows);
+      const customer = id => c.query('SELECT * FROM qa_global_customers WHERE id=$1', [id]).then(result => mapApiRow('customers', result.rows[0]));
+      try {
+        await c.query('BEGIN');
+        for (const table of tables) {
+          await c.query(`CREATE TEMP TABLE qa_global_${table} (LIKE himoto.${table} INCLUDING DEFAULTS)`);
+          if (table !== 'management_contract_payments') {
+            await c.query(`ALTER TABLE qa_global_${table} ALTER COLUMN id DROP DEFAULT`);
+            await c.query(`ALTER TABLE qa_global_${table} ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (START WITH 10000)`);
+          }
+        }
+        await c.query(`INSERT INTO qa_global_stores(id,store_name) VALUES (23,'CS QA rental'),(31,'CS QA owner'),(34,'CS QA first');
+          INSERT INTO qa_global_customers(id,name,phone,id_card,status,store_id,address,id_card_issued_on,id_card_issued_by,relatives) VALUES
+            (7,'Customer A QA','090.000.0011','001234567890',1,31,'Address QA','2024-01-15','Issuer QA','[{"name":"Relative QA","relationship":"Mother","phone":"0900000099"}]'),
+            (8,'Customer B QA','0900000011','001234567891',1,23,'Address QA',NULL,NULL,'[]'),
+            (9,'Customer C QA','0900000012','001234567892',1,NULL,'Address QA',NULL,NULL,'[]'),
+            (10,'Customer D QA','0900000013','001234567893',1,31,'Address QA',NULL,NULL,'[]');
+          INSERT INTO qa_global_orders(id,customer_id,store_id,order_status,created_at,rent_at,deleted_at) VALUES
+            (101,7,31,'completed','2023-01-01','2025-01-01',NULL),
+            (102,7,34,'completed','2025-01-01',NULL,NULL),
+            (103,7,23,'cancelled','2020-01-01','2020-01-01',NULL),
+            (104,7,23,'draft','2019-01-01','2019-01-01',NULL),
+            (105,7,23,'completed','2018-01-01','2018-01-01',now()),
+            (106,10,23,'draft','2019-01-01','2019-01-01',NULL);
+          INSERT INTO qa_global_order_vehicle_details(id,order_id,vehicle_id,rent_at,deleted_at) VALUES
+            (1,102,100,'2024-03-01',NULL),(2,102,100,'2017-01-01',now());
+          INSERT INTO qa_global_staff_profiles(id,staff_code,full_name,phone,store_id) VALUES (700,'QA700','Staff rental QA','0900000091',23),(800,'QA800','Staff owner QA','0900000092',31);
+          INSERT INTO qa_global_vehicles(id,name,brand,type,year,store_id,current_store_id,license,status,created_by) VALUES
+            (100,'Vehicle QA','Honda','xeso',2026,23,23,'QA-100','ready',143),(101,'Vehicle new QA','Honda','xeso',2026,23,23,'QA-101','ready',143);`);
+        const matches = await searchRows('0900000011');
+        assert.deepEqual(matches.map(row => Number(row.id)), [8,7]);
+        const a = matches.find(row => Number(row.id) === 7);
+        assert.equal(Number(a.store_id), 31); assert.equal(Number(a.first_rental_store_id), 34);
+        assert.equal(a.first_rental_store_name, 'CS QA first'); assert.equal(a.first_rented_at.toISOString().slice(0,10), '2024-03-01');
+        assert.equal(a.id_card_issued_by, 'Issuer QA'); assert.equal(a.relatives[0].name, 'Relative QA');
+        assert.equal((await searchRows('001234567890')).length, 1);
+        assert.equal((await searchRows('0900000012'))[0].store_id, null);
+        assert.equal((await searchRows('0900000013'))[0].first_rental_store_id, null);
+        checks.push('PostgreSQL TEMP: full profiles across branches, duplicate phones, exact CCCD, unassigned customers; first rental uses actual dates and ignores drafts, cancellations and deleted history');
+
+        session.protectDatabaseRequest = async () => null;
+        Object.defineProperty(db, 'query', { configurable: true, value: proxy.query });
+        Object.defineProperty(ownerDatabase, 'query', { configurable: true, value: proxy.query });
+        for (const suffix of ['', '&store_id=23', '&store_id=31']) {
+          const payload = await (await search(`query=0900000011${suffix}`)).json();
+          assert.deepEqual(payload.data.map(row => Number(row.id)), [8,7]);
+          assert.equal(payload.data[1].first_rental_store_name, 'CS QA first');
+        }
+        checks.push('PostgreSQL TEMP: actual GET handler returns the same complete global results with no branch or either branch selected');
+        await c.query("INSERT INTO qa_global_customers(id,name,phone,id_card,status,store_id,customer_type,contact_channel,contact_detail) VALUES(11,'International QA','','QAP123456',1,31,'foreign','Facebook','qa.international'),(12,'International numeric QA','','1726617',1,34,'foreign','WhatsApp','+82 10 1234 5678')");
+        for(const query of ['QAP123456','qa.international','1726617','821012345678']){
+          const payload=await(await search(`query=${encodeURIComponent(query)}&store_id=23`)).json();
+          assert.equal(payload.data.length,1);assert.equal(payload.data[0].customer_type,'foreign');assert.equal(payload.data[0].phone,'');
+        }
+        await c.query('UPDATE qa_global_customers SET status=2 WHERE id=11');
+        const foreignRevision=(await c.query('SELECT xmin::text AS revision FROM qa_global_customers WHERE id=11')).rows[0].revision;
+        const blacklist=load(path.join(root,'lib/server/customer-blacklist'));
+        assert.equal((await blacklist.changeCustomerBlacklist(proxy,11,{revision:foreignRevision,blacklisted:false})).status,'active');
+        checks.push('PostgreSQL TEMP: real global API finds foreign passports, short international document numbers and Facebook/WhatsApp contacts across branches without a phone');
+
+        const dataset = { stores: [{id:23}], staff: [{id:700,store_id:23}], vehicles: [{id:100,store_id:23,name:'Vehicle QA',license:'QA-100'}], customers: [], contracts: [] };
+        async function rent(id, vehicleId) {
+          const draft = createContractDraft(dataset, '23');
+          draft.customer_id = id; draft.customer = customerDetails(await customer(id)); draft.staff_id = '700';
+          draft.vehicles = [vehicleDetails({...dataset.vehicles[0],id:vehicleId}, draft.customer)];
+          draft.start_date = '2026-10-11T08:00'; draft.end_date = '2026-10-12T08:00'; draft.unit_price = '150000'; draft.total_amount = '150000';
+          const edits = {draft,status:'draft',rental_type:'daily',notes:'QA TEMP'};
+          if (id === 7) {
+            await assert.rejects(saveDatabaseDraft(proxy, null, { ...edits, draft:{...draft,customer_id:99999} }), /Không tìm thấy hồ sơ khách hàng/);
+            // Incomplete representative fields may be saved in a draft; the
+            // final-submit suite validates required paperwork before issue.
+          }
+          const saved = await saveDatabaseDraft(proxy, null, edits);
+          assert.equal(Number(saved.customer_id), id); assert.equal(Number(saved.store_id), 23);
+          assert.equal((await customer(id)).store_id, 31);
+          if (id === 10) assert.equal((await searchRows('0900000013'))[0].first_rental_store_id, null);
+          const paidAt = new Date(Date.now()+7*3600000-60000).toISOString().slice(0,16);
+          const final = await finalizeContractDraft(proxy, Number(saved.id), 143, { revision:saved.draft_revision, paid_at:paidAt, deposit:null, rental:null });
+          assert.equal(final.transaction_ids.length, 0); assert.equal((await customer(id)).store_id, 31);
+          return final;
+        }
+        await rent(7,100);
+        assert.equal(Number((await searchRows('0900000011')).find(row=>Number(row.id)===7).first_rental_store_id),34);
+        await rent(10,101);
+        assert.equal(Number((await searchRows('0900000013'))[0].first_rental_store_id),23);
+        await c.query("INSERT INTO qa_global_vehicles(id,name,brand,type,year,store_id,current_store_id,license,status,created_by) VALUES(102,'International vehicle QA','Honda','xeso',2026,23,23,'QA-102','ready',143)");
+        await rent(11,102);
+        assert.equal((await customer(11)).customer_type,'foreign');
+        assert.equal((await customer(11)).contact_detail,'qa.international');
+        checks.push('PostgreSQL TEMP: save and finalize cross-branch rentals preserve customer ID and ownership; drafts do not become first rentals; a first issued rental records its actual branch');
+      } finally { await c.query('ROLLBACK'); c.release(); }
+    }
+  } finally { session.protectDatabaseRequest = auth; session.userFromSession = userFromSession;session.readSessionUser=readSessionUser; Object.defineProperties(db, descriptors); Object.defineProperties(ownerDatabase, ownerDescriptors); }
+  console.log(JSON.stringify({ passed:checks.length, checks },null,2));
+}
+run().then(()=>process.exit(0)).catch(error=>{ console.error(error.message); process.exit(1); });

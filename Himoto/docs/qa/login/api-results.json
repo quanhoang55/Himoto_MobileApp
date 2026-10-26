@@ -1,0 +1,12 @@
+{
+  "source": "api",
+  "passed": 5,
+  "checks": [
+    "home opens login with the existing HIMOTO image loaded",
+    "validation focuses invalid fields; password toggle and failed-login retry work; anonymous/cross-origin access is blocked",
+    "tablet/mobile form has no horizontal overflow and supports keyboard access",
+    "authorized session opens live drafts and logout clears access and the HttpOnly cookie",
+    "no browser JavaScript errors"
+  ],
+  "browser_errors": []
+}

@@ -1,0 +1,181 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const ts = require('typescript');
+const root = path.resolve(__dirname, '../src');
+const cache = new Map();
+function load(filename) {
+  const file = filename.endsWith('.ts') ? filename : `${filename}.ts`;
+  if (cache.has(file)) return cache.get(file).exports;
+  const module = { exports: {} }; cache.set(file, module);
+  const javascript = ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const localRequire = name => name === 'server-only' ? {} : name.startsWith('@/') ? load(path.join(root, name.slice(2))) : name.startsWith('.') ? load(path.resolve(path.dirname(file), name)) : require(name);
+  new Function('require', 'module', 'exports', javascript)(localRequire, module, module.exports);
+  return module.exports;
+}
+async function run() {
+  const { createDemoRepository, createApiRepository, mapApiRow } = load(path.join(root, 'lib/management/repository'));
+  const { createContractDraft } = load(path.join(root, 'lib/management/contract-document'));
+  const { DEMO_DRAFT_STORAGE_KEY, readDemoDrafts } = load(path.join(root, 'lib/management/contract-drafts'));
+  const { CONTRACT_STATUSES, MANAGEMENT_CONFIG, optionLabel } = load(path.join(root, 'lib/management/config'));
+  const { parseDraftEdits, saveDatabaseDraft, CONTRACT_LIST_SQL } = load(path.join(root, 'lib/server/contract-drafts'));
+  const checks = [];
+  const values = new Map();
+  const storage = { getItem: key => values.get(key) || null, setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
+  const repository = createDemoRepository(storage);
+  const before = await repository.load();
+  const draft = createContractDraft(before, 'all');
+  draft.customer_lookup = '0900012345'; draft.customer_source = 'Đang nhập';
+  const edits = { draft, status: 'draft', rental_type: 'daily', notes: 'Chưa chọn khách và xe' };
+  const saved = await repository.saveContractDraft(null, edits);
+  assert.equal(saved.row.status, 'draft'); assert.equal(saved.dataset.contracts.length, before.contracts.length + 1);
+  assert.equal(saved.row.customer_id, undefined); assert.equal(saved.row.total_amount, undefined);
+  assert.deepEqual(saved.dataset.vehicles, before.vehicles);
+  const fresh = createDemoRepository(storage); const restored = await fresh.load();
+  assert.deepEqual(restored.contracts.find(row => row.id === saved.row.id), JSON.parse(JSON.stringify(saved.row)));
+  const reopened = createContractDraft(restored, 'all', saved.row);
+  assert.equal(reopened.customer_lookup, '0900012345'); assert.equal(reopened.customer_source, 'Đang nhập');
+  checks.push('incomplete drafts save and survive reload without allocating a customer, vehicle, payment, or deposit');
+  reopened.customer_source = 'Tiếp tục sửa';
+  const updated = await fresh.saveContractDraft(saved.row.id, { ...edits, draft: reopened, notes: 'Đã sửa' });
+  assert.equal(updated.row.code, saved.row.code); assert.equal(updated.dataset.contracts.length, restored.contracts.length);
+  assert.equal(createContractDraft(updated.dataset, 'all', updated.row).customer_source, 'Tiếp tục sửa');
+  await assert.rejects(fresh.saveContractDraft(before.contracts[0].id, edits), /Chỉ cập nhật bản nháp/);
+  await assert.rejects(fresh.saveContractDraft(null, { ...edits, draft: { ...draft, total_amount: '-1' } }), /số tiền/);
+  await assert.rejects(fresh.saveContractDraft(null, { ...edits, draft: { ...draft, store_id: '99999' } }), /Cơ sở/);
+  assert.equal(reopened.contract_number,'');
+  const paper=await fresh.saveContractDraft(saved.row.id,{...edits,draft:{...reopened,contract_number:'000867'}});
+  assert.equal(paper.row.code,'000867');assert.equal(createContractDraft(paper.dataset,'all',paper.row).contract_number,'000867');
+  await assert.rejects(fresh.saveContractDraft(null,{...edits,draft:{...draft,contract_number:'000867'}}),/đã được sử dụng/);
+  const corrected=await fresh.saveContractDraft(saved.row.id,{...edits,draft:{...reopened,contract_number:'007180'}});
+  assert.equal(corrected.row.code,'007180');assert.equal(corrected.row.id,saved.row.id);
+  const automatic=await fresh.saveContractDraft(saved.row.id,{...edits,draft:{...reopened,contract_number:''}});
+  assert.match(automatic.row.code,/^NHAP-/);assert.equal(createContractDraft(automatic.dataset,'all',automatic.row).contract_number,'');
+  await assert.rejects(fresh.saveContractDraft(null,{...edits,draft:{...draft,contract_number:'A\nB'}}),/ký tự/);
+  assert(CONTRACT_STATUSES.some(option => option.value === 'draft' && option.label === 'Lưu nháp'));
+  assert.equal(optionLabel(MANAGEMENT_CONFIG.contracts, 'status', 'bad_debt'), 'Nợ xấu');
+  checks.push('Draft paper numbers can be added/corrected/cleared before issue, preserve leading zeros, reject duplicates and control characters; issued contracts stay protected');
+  const broken = createDemoRepository({ ...storage, setItem: () => { throw new Error('Quota exceeded'); } });
+  const unchanged = await broken.load();
+  await assert.rejects(broken.saveContractDraft(null, edits), /Không lưu được/);
+  assert.deepEqual(await broken.load(), unchanged);
+  values.set(DEMO_DRAFT_STORAGE_KEY, 'broken'); assert.throws(() => readDemoDrafts(storage), /Dữ liệu lưu vẫn được giữ nguyên/);
+  assert.equal(values.get(DEMO_DRAFT_STORAGE_KEY), 'broken');
+  values.delete(DEMO_DRAFT_STORAGE_KEY);
+  checks.push('storage errors are reported without partial writes or silently deleting unreadable drafts');
+  assert.deepEqual(parseDraftEdits(edits), edits);
+  for (const invalid of [null, {}, { ...edits, status: 'renting' }, { ...edits, draft: { ...draft, store_id: '1 OR 1=1' } }, { ...edits, draft: { ...draft, customer: null } }]) assert.throws(() => parseDraftEdits(invalid));
+  const snapshot = { ...draft, contract_number: 'NHAP-9000' };
+  const raw = { id: 9000, draft_reference: 'NHAP-9000', status: 'draft', draft_revision: '100', draft_payload: { management_composer: { version: 1, ...edits, draft: snapshot } } };
+  const mapped = mapApiRow('contracts', raw);
+  const {contract_type_id,contract_type_name,contract_type_months,...reopenedSnapshot}=createContractDraft(before,'all',mapped);
+  assert.deepEqual(reopenedSnapshot,{...snapshot,contract_number:''});
+  assert.equal(contract_type_id,'daily');assert.equal(contract_type_name,'Thuê theo ngày');assert.equal(contract_type_months,'');
+  assert.equal(mapped.draft_revision, '100'); assert.equal(mapped.total_amount, undefined);
+  const leanHydrate = mapApiRow('contracts', {
+    id: 9001, draft_reference: 'NHAP-9001', status: 'draft', draft_revision: '200',
+    customer_name: 'Tên cột đơn', customer_phone: '0900000000', vehicles: [],
+    draft_payload: { management_composer: { version: 1, notes: 'Đã nhập đủ', rental_type: 'daily', draft: snapshot } },
+  });
+  assert.ok(leanHydrate.draft_json);
+  const fromLean = createContractDraft(before, 'all', leanHydrate);
+  assert.equal(fromLean.customer_lookup, snapshot.customer_lookup);
+  assert.equal(fromLean.customer_source, snapshot.customer_source);
+  assert.equal(fromLean.customer.name, snapshot.customer.name);
+  assert.deepEqual(fromLean.vehicles.map(vehicle => vehicle.id), snapshot.vehicles.map(vehicle => vehicle.id));
+  checks.push('paged list hydrate that only has management_composer still restores the saved draft instead of empty columns');
+  const legacy = mapApiRow('contracts', { id: 1, draft_reference: 'OLD-DRAFT', order_status: 'draft', store_id: 1,
+    draft_payload: { order_items: [{ vehicle_id: before.vehicles[0].id, driver_name: 'Người lái cũ', borrow_hats: 2, borrow_raincoats: 1 }] } });
+  assert.equal(legacy.code, 'OLD-DRAFT'); assert.equal(legacy.status, 'draft');
+  const legacyDraft = createContractDraft(before, 'all', legacy);
+  assert.equal(legacyDraft.vehicles[0].driver_name, 'Người lái cũ'); assert.equal(legacyDraft.vehicles[0].borrow_hats, '2');
+  const legacyClient = { query: async sql => {
+    if (sql.includes('FOR UPDATE')) return { rows: [{ id: 99, order_status: 'draft', contract_number: 'PUBLIC-NUMBER', draft_reference: 'DRAFT-REFERENCE', draft_revision: '1' }] };
+    if (sql.startsWith(CONTRACT_LIST_SQL)) return { rows: [{ id: 99, status: 'draft', contract_number: 'PUBLIC-NUMBER' }] };
+    if (sql.includes('COALESCE(SUM(value),0) AS paid')) return {rows:[{paid:0}],rowCount:1};
+    return { rows: [], rowCount: 0 };
+  } };
+  const numbered = await saveDatabaseDraft(legacyClient, 99, { ...edits, draft: { ...draft, contract_number: 'PUBLIC-NUMBER' }, revision: '1' });
+  assert.equal(numbered.contract_number, 'PUBLIC-NUMBER');
+  checks.push('server validates untrusted draft bodies; API snapshots and legacy draft payloads retain editable details');
+  const originalFetch = global.fetch;
+  const calls = [];
+  try {
+    const api = createApiRepository('/api');
+    await assert.rejects(api.saveContractDraft(null, edits), /Chưa tích hợp/);
+    const connected = createApiRepository('/api', { drafts: true });
+    global.fetch = async (url, options) => { calls.push({ url, options }); return { ok: true, status: 200, json: async () => ({ status: 'success', data: [] }) }; };
+    await connected.load();
+    assert(calls.every(call => call.options.cache === 'no-store'));
+    global.fetch = async (url, options) => { calls.push({ url, options }); return { ok: true, status: 200, json: async () => ({ status: 'success', data: raw }) }; };
+    const created = await connected.saveContractDraft(null, edits);
+    assert.equal(calls.at(-1).options.method, 'POST'); assert.equal(calls.at(-1).url, '/api/auth/order/car-rental');
+    assert.equal(created.row.status, 'draft');
+    await connected.saveContractDraft(9000, { ...edits, revision: '100' });
+    assert.equal(calls.at(-1).options.method, 'PUT'); assert.equal(calls.at(-1).url, '/api/auth/order/car-rental/9000');
+    global.fetch = async () => ({ ok: false, status: 409, json: async () => ({ status: 'error', message: 'Bản nháp đã được người khác cập nhật.' }) });
+    await assert.rejects(connected.saveContractDraft(9000, edits), /người khác/);
+  } finally { global.fetch = originalFetch; }
+  checks.push('API reads bypass cache; draft writes use only the existing rental URL and propagate conflicts');
+  if (process.argv.includes('--database')) {
+    require('@next/env').loadEnvConfig(path.resolve(__dirname, '..'), true);
+    const { Pool } = require('pg'); const url = new URL(process.env.DATABASE_URL || process.env.SUPABASE_DATABASE_URL); url.searchParams.delete('sslmode');
+    const pool = new Pool({ connectionString: url.toString(), ssl: { rejectUnauthorized: false }, max: 1, connectionTimeoutMillis: 8000 });
+    const client = await pool.connect();
+    let tempId;
+    try {
+      await client.query('BEGIN');
+      const financeBefore = await client.query("SELECT (SELECT count(*) FROM himoto.transactions) AS transactions, (SELECT count(*) FROM himoto.order_vehicle_details) AS items");
+      const legacySource = await client.query(`${CONTRACT_LIST_SQL} AND o.order_status='draft' ORDER BY o.id LIMIT 1`);
+      if (legacySource.rowCount) {
+        const source = JSON.parse(JSON.stringify(legacySource.rows[0]));
+        const customerRows = await client.query('SELECT * FROM himoto.customers WHERE id=$1', [source.customer_id]);
+        const vehicleRows = await client.query('SELECT id,name,license,brand,type,year,current_store_id FROM himoto.vehicles WHERE current_store_id=$1', [source.store_id]);
+        const staffRows = await client.query('SELECT id,full_name,store_id,status FROM himoto.staff_profiles WHERE store_id=$1', [source.store_id]);
+        const legacyDataset = { stores: [{ id: Number(source.store_id) }], staff: staffRows.rows.map(row => mapApiRow('staff', row)),
+          customers: JSON.parse(JSON.stringify(customerRows.rows)).map(row => mapApiRow('customers', row)), vehicles: vehicleRows.rows.map(row => mapApiRow('vehicles', row)), contracts: [] };
+        const sourceDraft = createContractDraft(legacyDataset, 'all', mapApiRow('contracts', source));
+        const legacyUpdated = await saveDatabaseDraft(client, Number(source.id), { draft: sourceDraft, status: 'draft', rental_type: source.rental_type,
+          notes: source.notes || '', revision: source.draft_revision });
+        assert.equal(legacyUpdated.status, 'draft');
+        const originalItems = source.draft_payload?.order_items || [];
+        const preservedKeys = ['price_id', 'total_money', 'substitute_unit_price', 'order_item_fees', 'hiringFee', 'rent_at', 'return_at'];
+        for (const item of originalItems) {
+          const updatedItem = legacyUpdated.draft_payload.order_items.find(row => String(row.vehicle_id) === String(item.vehicle_id));
+          assert(updatedItem);
+          for (const key of preservedKeys) if (key in item) assert.deepEqual(updatedItem[key], item[key]);
+        }
+      }
+      const testDraft = createContractDraft(before, 'all');
+      testDraft.customer_source = 'QA transaction, rolled back';
+      const inserted = await saveDatabaseDraft(client, null, { ...edits, draft: testDraft });
+      tempId = Number(inserted.id); assert.equal(inserted.status, 'draft');
+      assert.equal(inserted.draft_reference, `NHAP-${tempId}`);
+      const savedSnapshot = createContractDraft(before, 'all', mapApiRow('contracts', inserted));
+      const oldRevision = inserted.draft_revision;
+      const changed = await saveDatabaseDraft(client, tempId, { ...edits, draft: { ...savedSnapshot, customer_source: 'QA update' }, revision: oldRevision });
+      assert.equal(changed.draft_payload.management_composer.draft.customer_source, 'QA update');
+      await assert.rejects(saveDatabaseDraft(client, tempId, { ...edits, draft: savedSnapshot, revision: '0' }), /người khác/);
+      const issued = await client.query("SELECT id FROM himoto.orders WHERE order_status = 'renting' AND deleted_at IS NULL LIMIT 1");
+      if (issued.rowCount) await assert.rejects(saveDatabaseDraft(client, Number(issued.rows[0].id), { ...edits, revision: '0' }), /Chỉ được cập nhật/);
+      const financeAfter = await client.query("SELECT (SELECT count(*) FROM himoto.transactions) AS transactions, (SELECT count(*) FROM himoto.order_vehicle_details) AS items");
+      assert.deepEqual(financeAfter.rows, financeBefore.rows);
+      await client.query('ROLLBACK');
+      const remains = await client.query(`${CONTRACT_LIST_SQL} AND o.id = $1`, [tempId]);
+      assert.equal(remains.rowCount, 0);
+      checks.push('real Supabase transaction updates a legacy draft without losing item pricing, creates/updates drafts, rejects stale revisions and issued contracts, leaves financial/items tables unchanged, and rolls back all QA changes');
+    } finally { await client.query('ROLLBACK'); client.release(); await pool.end(); }
+  }
+  const composer = fs.readFileSync(path.join(root, 'components/contracts/ContractComposer.tsx'), 'utf8');
+  const shell = fs.readFileSync(path.join(root, 'components/management/ManagementShell.tsx'), 'utf8');
+  const table = fs.readFileSync(path.join(root, 'lib/server/management-table.ts'), 'utf8');
+  assert.ok(composer.includes('Làm mới bản nháp'));
+  assert.ok(composer.includes('requestManagementTable'));
+  assert.ok(shell.includes('Làm mới dữ liệu'));
+  assert.ok(table.includes("WHEN o.order_status='draft' THEN jsonb_build_object("));
+  assert.ok(table.includes("o.xmin::text AS draft_revision"));
+  checks.push('composer and the top bar expose a reload action so a stale draft revision can be refreshed without closing the form');
+  checks.push('paged contract hydrate keeps the saved composer draft so reopen does not rebuild from empty list columns');
+  process.stdout.write(JSON.stringify({ passed: checks.length, checks }, null, 2) + '\n');
+}
+run().catch(error => { console.error('Draft checks failed:', error.message); process.exitCode = 1; });

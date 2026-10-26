@@ -1,0 +1,488 @@
+
+.contract-print-wrapper {
+	position: relative;
+	background: #fff;
+	color: #111;
+	font-family: "Times New Roman", Times, serif;
+	font-size: 11px;
+	line-height: 1.25;
+	margin: 0 auto;
+}
+.contract-print-wrapper .contract-page.a4-landscape {
+	width: 285mm;
+	min-height: 195mm;
+	padding: 6mm 8mm;
+	background: #fff;
+	box-sizing: border-box;
+	margin: 0 auto;
+	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
+	position: relative;
+}
+
+.contract-print-wrapper .contract-two-columns {
+	display: flex;
+	width: 100%;
+}
+
+.contract-print-wrapper .contract-col {
+	width: 50%;
+	box-sizing: border-box;
+}
+
+.contract-print-wrapper .col-left {
+	padding-right: 12px;
+	border-right: 1px dashed #777;
+}
+
+.contract-print-wrapper .col-right {
+	padding-left: 12px;
+}
+
+/* Watermark */
+.contract-print-wrapper .contract-watermark {
+	position: absolute;
+	top: 45%;
+	left: 50%;
+	transform: translate(-50%, -50%) rotate(-25deg);
+	font-size: 40px;
+	font-weight: 900;
+	color: rgba(220, 53, 69, 0.14);
+	border: 5px dashed rgba(220, 53, 69, 0.2);
+	padding: 12px 30px;
+	text-transform: uppercase;
+	pointer-events: none;
+	z-index: 99;
+	letter-spacing: 2px;
+	text-align: center;
+	white-space: nowrap;
+}
+
+/* Header Himoto Brand */
+.contract-print-wrapper .himoto-brand {
+	width: 130px;
+}
+
+.contract-print-wrapper .himoto-logo-badge {
+	border: 1.5px solid #d32f2f;
+	padding: 2px 4px;
+	text-align: center;
+}
+
+.contract-print-wrapper .himoto-logo-badge .logo-title {
+	font-size: 20px;
+	font-weight: 900;
+	color: #d32f2f;
+	letter-spacing: 1px;
+	display: block;
+	line-height: 1;
+}
+
+.contract-print-wrapper .himoto-logo-badge .logo-subtitle {
+	font-size: 8px;
+	font-weight: bold;
+	background: #111;
+	color: #fff;
+	padding: 1px 2px;
+	margin-top: 2px;
+	letter-spacing: 0.5px;
+}
+
+.contract-print-wrapper .national-header .national-title {
+	font-size: 11px;
+	font-weight: bold;
+}
+
+.contract-print-wrapper .national-header .national-motto {
+	font-size: 10.5px;
+	font-weight: bold;
+}
+
+.contract-print-wrapper .header-divider {
+	letter-spacing: 2px;
+	font-size: 10px;
+	line-height: 1;
+}
+
+.contract-print-wrapper .contract-main-title {
+	font-size: 16px;
+	font-weight: bold;
+	letter-spacing: 0.5px;
+}
+
+.contract-print-wrapper .contract-meta {
+	display: grid;
+	grid-template-columns: minmax(0, auto) minmax(0, auto);
+	justify-content: center;
+	gap: 12mm;
+	align-items: baseline;
+	font-size: 10.5px;
+}
+
+.contract-print-wrapper .contract-meta .contract-officer {
+	text-align: left;
+	overflow-wrap: anywhere;
+}
+
+.contract-print-wrapper .legal-references {
+	font-size: 9.5px;
+	font-style: italic;
+	line-height: 1.2;
+}
+
+.contract-print-wrapper .legal-line {
+	margin-bottom: 1px;
+}
+
+.contract-print-wrapper .signed-date-line {
+	font-size: 10.5px;
+	font-style: italic;
+}
+
+.contract-print-wrapper .party-info {
+	font-size: 10px;
+	line-height: 1.18;
+}
+
+.contract-print-wrapper .party-row {
+	margin-bottom: 1px;
+}
+
+.contract-print-wrapper .contract-intro {
+	font-size: 10px;
+	font-style: italic;
+}
+
+.contract-print-wrapper .contract-clause {
+	font-size: 10px;
+	line-height: 1.17;
+}
+
+.contract-print-wrapper .clause-heading {
+	font-size: 10.5px;
+}
+.contract-print-wrapper .clause-note {
+	font-style: italic;
+}
+
+.contract-print-wrapper .hours-badge {
+	font-size: 9.5px;
+	font-weight: normal;
+	font-style: italic;
+}
+
+.contract-print-wrapper .clause-p {
+	margin-bottom: 0;
+	text-align: justify;
+}
+
+.contract-print-wrapper .badge-license {
+	display: inline-block;
+	border: 1px solid #111;
+	padding: 0 4px;
+	border-radius: 2px;
+}
+
+.contract-print-wrapper .appendix-confirmations {
+	break-inside: avoid;
+}
+
+.contract-print-wrapper .appendix-signatures {
+	justify-content: space-between;
+	padding-inline: 8mm;
+}
+
+.contract-print-wrapper .sig-block {
+	width: max-content;
+	max-width: 48%;
+}
+
+.contract-print-wrapper .sig-role {
+	font-size: 11px;
+}
+
+.contract-print-wrapper .sig-hint {
+	font-size: 9px;
+	font-style: italic;
+}
+
+.contract-print-wrapper .sig-space {
+	height: 24px;
+}
+
+.contract-print-wrapper .appendix-signatures .sig-space {
+	height: 10mm;
+}
+
+.contract-print-wrapper .sig-name {
+	font-size: 10.5px;
+}
+
+/* Cột Phải - Phụ lục */
+.contract-print-wrapper .appendix-main-title {
+	font-size: 13px;
+	font-weight: bold;
+}
+
+.contract-print-wrapper .appendix-subtitle {
+	font-size: 9.5px;
+	font-style: italic;
+}
+
+.contract-print-wrapper .appendix-terms {
+	font-size: 9.5px;
+	line-height: 1.2;
+}
+
+.contract-print-wrapper .term-heading {
+	font-size: 10px;
+}
+
+.contract-print-wrapper .term-list {
+	padding-left: 14px;
+	margin-bottom: 2px;
+	text-align: justify;
+}
+
+.contract-print-wrapper .term-list li {
+	margin-bottom: 2px;
+}
+
+.contract-print-wrapper .term-list.commitments li {
+	margin-bottom: 2px;
+}
+
+/* Bảng xác nhận trả xe */
+.contract-print-wrapper .return-receipt-box {
+	margin-top: 4px;
+}
+
+.contract-print-wrapper .receipt-company {
+	font-size: 10px;
+}
+
+.contract-print-wrapper .receipt-title {
+	font-size: 11px;
+	letter-spacing: 0.5px;
+}
+
+.contract-print-wrapper .receipt-table {
+	border-collapse: collapse;
+	margin-top: 3px;
+	font-size: 9.5px;
+	table-layout: fixed;
+}
+
+.contract-print-wrapper .receipt-table td {
+	border: 1px solid #666;
+	padding: 2px 4px;
+	width: 25%;
+	vertical-align: top;
+	overflow-wrap: anywhere;
+}
+
+.contract-print-wrapper .receipt-table tr:first-child {
+	height: 6mm;
+}
+
+.contract-print-wrapper .receipt-table tr:last-child {
+	height: 9mm;
+}
+
+.contract-print-wrapper .payment-method .is-picked {
+	font-weight: 700;
+	border: 1px solid #111;
+	border-radius: 50%;
+	padding: 0 2px;
+}
+
+.himoto-print-root {
+	display: none;
+}
+
+/* Hợp đồng thuê pin — A4 dọc */
+.battery-print-wrapper {
+	background: #fff;
+	color: #111;
+	font-family: "Times New Roman", Times, serif;
+	font-size: 12px;
+	line-height: 1.27;
+	margin: 0 auto;
+}
+.battery-print-wrapper .battery-page {
+	position: relative;
+	width: 210mm;
+	min-height: 297mm;
+	padding: 7mm 11mm 6mm;
+	box-sizing: border-box;
+	margin: 0 auto;
+	background: #fff;
+	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
+}
+.battery-print-wrapper p { margin: 0 0 1px; text-align: justify; }
+.battery-print-wrapper b { font-weight: 700; }
+.battery-print-wrapper .battery-head {
+	display: grid;
+	grid-template-columns: 40mm minmax(0, 1fr) minmax(24mm, auto);
+	align-items: start;
+	gap: 4mm;
+}
+.battery-print-wrapper .battery-logo {
+	display: grid;
+	justify-items: center;
+	background: #e3262e;
+	color: #fff;
+	padding: 1px 4px 2px;
+	transform: skewX(-6deg);
+}
+.battery-print-wrapper .battery-logo span {
+	font: italic 900 30px/1 Arial, Helvetica, sans-serif;
+	letter-spacing: -1px;
+}
+.battery-print-wrapper .battery-logo small {
+	font: 700 7px/1.3 Arial, Helvetica, sans-serif;
+	letter-spacing: .3px;
+}
+.battery-print-wrapper .battery-nation,
+.battery-print-wrapper .battery-number { display: grid; gap: 2px; }
+.battery-print-wrapper .battery-nation { text-align: center; font-size: 13px; }
+.battery-print-wrapper .battery-nation em { font-style: normal; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+.battery-print-wrapper .battery-number { font-size: 13px; max-width: 42mm; overflow-wrap: anywhere; }
+.battery-print-wrapper .battery-number em { font-style: italic; }
+.battery-print-wrapper h1 {
+	margin: 2mm 0 1mm;
+	text-align: center;
+	font-size: 17px;
+	font-weight: 700;
+	letter-spacing: .3px;
+}
+.battery-print-wrapper .battery-legal { margin: 0 0 1mm; padding: 0; list-style: none; font-style: italic; }
+.battery-print-wrapper .battery-legal li::before { content: "-"; display: inline-block; width: 6mm; }
+.battery-print-wrapper .battery-row {
+	display: flex;
+	align-items: baseline;
+	gap: 4px;
+	flex-wrap: wrap;
+	white-space: normal;
+}
+.battery-print-wrapper .battery-row > span { min-width: 0; overflow-wrap: anywhere; }
+.battery-print-wrapper .battery-fill {
+	flex: 1 1 auto;
+	min-width: 20mm;
+	min-height: 1.3em;
+	border-bottom: 1px dotted #444;
+	white-space: normal;
+}
+.battery-print-wrapper .battery-fill-short { flex: 0 0 34mm; }
+.battery-print-wrapper .battery-fill-medium { flex: 0 1 75mm; }
+.battery-print-wrapper .battery-cols {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: space-between;
+	gap: 3mm;
+}
+.battery-print-wrapper .battery-cols > span { min-width: 0; overflow-wrap: anywhere; }
+.battery-print-wrapper .is-picked {
+	font-weight: 700;
+	border: 1px solid #111;
+	border-radius: 50%;
+	padding: 0 2px;
+}
+.battery-print-wrapper .battery-signatures {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	margin-top: 2mm;
+	text-align: center;
+}
+.battery-print-wrapper .battery-signatures div { display: grid; align-content: start; gap: 1px; min-height: 24mm; }
+.battery-print-wrapper .battery-signatures strong { font-size: 13px; }
+.battery-print-wrapper .battery-sign-name { align-self: end; margin-top: 12mm; }
+
+/* In ấn @media print */
+@media print {
+	@page {
+		size: A4 landscape;
+		margin: 6mm 6mm;
+	}
+
+	html.himoto-printing,
+	html.himoto-printing body {
+		margin: 0 !important;
+		padding: 0 !important;
+		height: auto !important;
+		min-height: 0 !important;
+		overflow: visible !important;
+		background: #fff !important;
+	}
+
+	html.himoto-printing body > :not(.himoto-print-root),
+	html.himoto-printing dialog {
+		display: none !important;
+	}
+
+	html.himoto-printing .himoto-print-root {
+		display: block;
+	}
+
+	.contract-print-wrapper {
+		position: absolute;
+		left: 0;
+		top: 0;
+		width: 100% !important;
+		margin: 0 !important;
+		padding: 0 !important;
+		background: transparent !important;
+	}
+
+	.contract-page.a4-landscape {
+		width: 100% !important;
+		min-height: auto !important;
+		padding: 0 !important;
+		margin: 0 !important;
+		box-shadow: none !important;
+	}
+
+	.page-break {
+		page-break-before: always;
+	}
+
+	.battery-print-wrapper .battery-page {
+		box-shadow: none !important;
+		margin: 0 !important;
+		min-height: 0 !important;
+	}
+}
+
+/* Utilities the legacy template received from Bootstrap, scoped to its document. */
+.contract-print-wrapper .d-flex { display: flex; }
+.contract-print-wrapper .justify-content-between { justify-content: space-between; }
+.contract-print-wrapper .align-items-start { align-items: flex-start; }
+.contract-print-wrapper .text-center { text-align: center; }
+.contract-print-wrapper .text-left { text-align: left; }
+.contract-print-wrapper .text-uppercase { text-transform: uppercase; }
+.contract-print-wrapper .font-weight-bold { font-weight: 700; }
+.contract-print-wrapper .font-italic { font-style: italic; }
+.contract-print-wrapper .flex-shrink-0 { flex-shrink: 0; }
+.contract-print-wrapper .small { font-size: 80%; }
+.contract-print-wrapper .d-block { display: block; }
+.contract-print-wrapper .w-100 { width: 100%; }
+.contract-print-wrapper .text-danger { color: #dc3545; }
+.contract-print-wrapper .bg-light { background: #f8f9fa; }
+.contract-print-wrapper .mt-1 { margin-top: 4px; }
+.contract-print-wrapper .mt-2 { margin-top: 8px; }
+.contract-print-wrapper .mt-4 { margin-top: 24px; }
+.contract-print-wrapper .mb-0 { margin-bottom: 0; }
+.contract-print-wrapper .mb-3 { margin-bottom: 16px; }
+.contract-print-wrapper .mr-2 { margin-right: 8px; }
+.contract-print-wrapper .ml-1 { margin-left: 4px; }
+.contract-print-wrapper .ml-2 { margin-left: 8px; }
+.contract-print-wrapper .px-2 { padding-inline: 8px; }
+.contract-print-wrapper .px-3 { padding-inline: 16px; }
+.contract-print-wrapper .px-5 { padding-inline: 48px; }
+.contract-print-wrapper .p-3 { padding: 16px; }
+.contract-print-wrapper .table { width: 100%; border-collapse: collapse; }
+.contract-print-wrapper .table th, .contract-print-wrapper .table td { border: 1px solid #dee2e6; padding: 4px; }
+.contract-print-wrapper p { margin-top: 0; }
+.contract-print-wrapper .text-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.contract-print-wrapper .contract-payment-qr { display: flex; gap: 10px; margin: 10px 0 0; align-items: center; break-inside: avoid; font-size: 10px; line-height: 1.4; }
+.contract-print-wrapper .contract-payment-qr img { width: 96px; height: 96px; flex: 0 0 96px; }
+.contract-print-wrapper .contract-payment-qr span,.contract-print-wrapper .contract-payment-qr strong { display: block; overflow-wrap: anywhere; }

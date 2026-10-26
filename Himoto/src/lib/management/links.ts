@@ -1,0 +1,1 @@
+export const rentalModuleUrl = process.env.NEXT_PUBLIC_RENTAL_APP_URL || 'https://himoto-web.onrender.com/car-rental';

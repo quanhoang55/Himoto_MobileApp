@@ -1,0 +1,15 @@
+{
+  "passed": 8,
+  "checks": [
+    "accent-insensitive search, empty search, page size and last-page count",
+    "numeric sort, combined filters, column visibility and actual CSV download",
+    "vehicle form validation, create, edit, and persistence across navigation",
+    "staff create, relational branch counts, and branch create",
+    "customer create, related contracts, read-only contract view, reused detail and date range",
+    "mobile navigation, horizontal table scroll, keyboard focus trap and Escape",
+    "load failure clears rows, shows error, and retry recovers",
+    "no API writes and no uncaught browser errors"
+  ],
+  "browser_errors": [],
+  "api_writes": []
+}

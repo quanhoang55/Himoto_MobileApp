@@ -1,0 +1,199 @@
+'use client';
+
+import { createContext, useCallback, useContext, useEffect, useState, useMemo, useSyncExternalStore, ReactNode } from 'react';
+import { usePathname } from 'next/navigation';
+import { createManagementRepository, mapApiRow } from '@/lib/management/repository';
+import { ContractEdits, CustomerAssignment, EditableKind, ManagementDataset, ManagementKind, ManagementRepository, ManagementRow } from '@/lib/management/types';
+import { createManagementDataLoader, managementKindsForPath, ResourceState } from '@/lib/management/data-loader';
+import { ContractAutofillRepository, createApiAutofillRepository } from '@/lib/management/contract-autofill';
+import { CustomerDetails } from '@/lib/management/contract-document';
+import { StoreCreation, StoreEdits } from '@/lib/management/store-management';
+import { createStoreRecord, deleteStoreRecord, updateStoreRecord } from '@/lib/management/store-repository';
+import { updateCustomerBlacklist } from '@/lib/management/customer-blacklist';
+import { CUSTOMER_STATUSES } from '@/lib/management/config';
+import type { PaymentContext } from '@/lib/management/contract-payments';
+import { hasPermission,type AccessPermission,type PermissionAccount } from '@/lib/management/permissions';
+
+interface ManagementContextValue {
+  dataset: ManagementDataset | null;
+  loading: boolean;
+  refreshing: boolean;
+  error: string;
+  resources: Record<ManagementKind, ResourceState>;
+  source: 'api';
+  canSaveContractDrafts: boolean;
+  /** Thanh toán HĐ / điền sổ quỹ: chỉ kế toán và admin. */
+  canPayContracts: boolean;
+  canFinalizeContracts:boolean;
+  can:(permission:AccessPermission)=>boolean;
+  accessUser:PermissionAccount|null;
+  selectedStore: string;
+  selectStore: (id: string) => void;
+  reload: (kinds?: readonly ManagementKind[]) => Promise<void>;
+  ensureData: (kinds: readonly ManagementKind[], force?: boolean) => Promise<void>;
+  invalidateData: (kinds: readonly ManagementKind[]) => void;
+  save: (kind: EditableKind, row: ManagementRow) => Promise<void>;
+  notify: (message: string) => void;
+  contractAutofill: ContractAutofillRepository;
+  createCustomer: (customer: CustomerDetails, assignment?: CustomerAssignment) => Promise<ManagementRow>;
+  updateCustomer: (customer: ManagementRow) => Promise<ManagementRow>;
+  deleteCustomer: (id: number) => Promise<void>;
+  setCustomerBlacklist: (customer: ManagementRow, blacklisted: boolean) => Promise<void>;
+  acceptImportedCustomers: (count: number) => Promise<void>;
+  updateStore: (id: number, edits: StoreEdits) => Promise<void>;
+  createStore: (store: StoreCreation) => Promise<void>;
+  deleteStore: (id: number) => Promise<void>;
+  cloneContract: (id: number) => Promise<ManagementRow>;
+  saveContract: (id: number, edits: ContractEdits) => Promise<ManagementRow>;
+  saveContractDraft: (id: number | null, edits: ContractEdits) => Promise<ManagementRow>;
+  acceptContractPayment: (context: PaymentContext) => void;
+}
+const ManagementContext = createContext<ManagementContextValue | null>(null);
+
+export function ManagementProvider({ children, canPayContracts = false,user=null }: { children: ReactNode; canPayContracts?: boolean;user?:PermissionAccount|null }) {
+  const can=useCallback((permission:AccessPermission)=>hasPermission(user,permission),[user]);
+  const [repository] = useState<ManagementRepository>(()=>createManagementRepository({staffDirectory:!hasPermission(user,'hr.read')}));
+  const [loader] = useState(() => createManagementDataLoader(repository));
+  const { dataset, resources } = useSyncExternalStore(loader.subscribe, loader.getSnapshot, loader.getSnapshot);
+  const pathname = usePathname();
+  const requiredKinds = managementKindsForPath(pathname);
+  const pagedKind=pathname==='/customers'?'customers':pathname.startsWith('/contracts')&&!pathname.startsWith('/contracts/battery')&&!pathname.startsWith('/contracts/types')?'contracts':null;
+  const loading = requiredKinds.some(kind => !resources[kind].loaded && !resources[kind].error);
+  const refreshing = requiredKinds.some(kind => resources[kind].loaded && resources[kind].loading);
+  const resourceError = requiredKinds.map(kind => resources[kind].error).filter(Boolean).join(' ');
+  const contractAutofill = useMemo(() => createApiAutofillRepository('/api'), []);
+  const fleetPage=pathname==='/vehicles'||pathname.startsWith('/vehicles/transfers');
+  const [branchStore, setBranchStore] = useState(user&&!user.scope_all&&user.store_id?String(user.store_id):'all');
+  const [fleetStore,setFleetStore]=useState('all');
+  const [fleetStores,setFleetStores]=useState<ManagementRow[]|null>(null);
+  const [fleetStoresError,setFleetStoresError]=useState('');
+  const [fleetStoresVersion,setFleetStoresVersion]=useState(0);
+  const error=[resourceError,fleetPage?fleetStoresError:''].filter(Boolean).join(' ');
+  const selectedStore=fleetPage?fleetStore:branchStore;
+  const selectStore=useCallback((id:string)=>{
+    if(fleetPage)setFleetStore(id);
+    else setBranchStore(user&&!user.scope_all&&user.store_id?String(user.store_id):id);
+  },[fleetPage,user]);
+  useEffect(()=>{
+    if(!fleetPage)return;const controller=new AbortController();setFleetStoresError('');
+    void fetch('/api/auth/store-directory',{signal:controller.signal,cache:'no-store'}).then(async response=>{
+      const body=await response.json();if(!response.ok||body.status!=='success'||!Array.isArray(body.data))throw Error('Không tải được danh sách cơ sở.');
+      if(!controller.signal.aborted)setFleetStores(body.data.map((row:Record<string,unknown>)=>mapApiRow('stores',row)));
+    }).catch(()=>{if(!controller.signal.aborted)setFleetStoresError('Không tải được danh sách cơ sở. Nhấn Làm mới để thử lại.');});return()=>controller.abort();
+  },[fleetPage,fleetStoresVersion]);
+  const visibleDataset=useMemo(()=>dataset&&fleetPage&&fleetStores?{...dataset,stores:fleetStores}:dataset,[dataset,fleetPage,fleetStores]);
+  const [notification, notify] = useState('');
+
+  const ensureData = useCallback((kinds: readonly ManagementKind[], force = false) => {
+    if(force&&pagedKind&&kinds.includes(pagedKind)){loader.invalidate([pagedKind]);return loader.ensure(kinds.filter(kind=>kind!==pagedKind),force);}
+    return loader.ensure(kinds, force);
+  }, [loader,pagedKind]);
+  const invalidateData = useCallback((kinds: readonly ManagementKind[]) => loader.invalidate(kinds), [loader]);
+  const reload = useCallback(async (kinds?: readonly ManagementKind[]) => {
+    if(fleetPage)setFleetStoresVersion(value=>value+1);
+    if(pagedKind&&(!kinds||kinds.includes(pagedKind)))loader.invalidate([pagedKind]);
+    const targets = (kinds || requiredKinds.filter(kind => kind !== 'stores' || requiredKinds.length === 1 || !loader.getSnapshot().resources.stores.loaded || loader.getSnapshot().resources.stores.error)).filter(kind=>kind!==pagedKind);
+    try { await loader.ensure(targets, true); } catch { /* Each failed resource exposes its own error and retry. */ }
+  }, [loader, requiredKinds,pagedKind,fleetPage]);
+  useEffect(() => {
+    loader.setContractsQuery('');
+  }, [loader, pathname]);
+  useEffect(() => { void ensureData(requiredKinds).catch(() => {}); }, [ensureData, requiredKinds, pathname]);
+  useEffect(() => {
+    if (!notification) return;
+    const timer = setTimeout(() => notify(''), Math.min(20_000, Math.max(5_000, 4_000 + notification.length * 40)));
+    return () => clearTimeout(timer);
+  }, [notification]);
+
+  const save = async (kind: EditableKind, row: ManagementRow) => {
+    const result = await repository.save(kind, row);
+    loader.update(kind, () => result[kind]);
+    notify('Đã cập nhật dữ liệu trên hệ thống.');
+  };
+  const cloneContract = async (id: number) => {
+    const result = await repository.cloneContract(id);
+    loader.update('contracts', rows => [result.row, ...rows.filter(row => row.id !== result.row.id)]);
+    notify(`Đã sao chép thành ${result.row.code} · ID ${result.row.id}. Đang mở form chỉnh sửa.`);
+    return result.row;
+  };
+  const saveContract = async (id: number, edits: ContractEdits) => {
+    const result = await repository.saveContract(id, edits);
+    loader.update('contracts', rows => rows.map(row => row.id === result.row.id ? result.row : row));
+    notify(`Đã lưu ${result.row.code}.`);
+    return result.row;
+  };
+  const saveContractDraft = async (id: number | null, edits: ContractEdits) => {
+    const result = await repository.saveContractDraft(id, edits);
+    loader.update('contracts', rows => [result.row, ...rows.filter(row => row.id !== result.row.id)]);
+    invalidateData(['customers']);
+    notify(`Đã lưu nháp ${result.row.code} vào Supabase. Mở mục Hợp đồng nháp để tiếp tục chỉnh sửa.`);
+    return result.row;
+  };
+  const createCustomer = async (customer: CustomerDetails, assignment?: CustomerAssignment) => {
+    const row = await contractAutofill.createCustomer(customer, assignment);
+    loader.update('customers', rows => [row, ...rows.filter(item => item.id !== row.id)]);
+    notify('Đã tạo khách hàng trong Supabase.');
+    return row;
+  };
+  const updateCustomer = async (customer: ManagementRow) => {
+    const updated = await contractAutofill.updateCustomer(customer);
+    const current = dataset?.customers.find(item => item.id === updated.id);
+    const row = { ...updated, code: customer.code, store_name: dataset?.stores.find(store => store.id === updated.store_id)?.name || '', contract_count: current?.contract_count ?? customer.contract_count ?? 0 };
+    loader.update('customers', rows => rows.map(item => item.id === row.id ? row : item));
+    invalidateData(['contracts']);
+    notify('Đã cập nhật hồ sơ khách hàng trong Supabase.');
+    return row;
+  };
+  const deleteCustomer = async (id: number) => {
+    await contractAutofill.deleteCustomer(id);
+    loader.update('customers', rows => rows.filter(item => item.id !== id));
+    notify('Đã xóa hồ sơ khách hàng khỏi Supabase.');
+  };
+  const setCustomerBlacklist = async (customer: ManagementRow, blacklisted: boolean) => {
+    const changes = await updateCustomerBlacklist(customer, blacklisted);
+    loader.update('customers', rows => rows.map(row => row.id === customer.id ? { ...row, ...changes } : row));
+    invalidateData(['contracts']);
+    notify(blacklisted ? `Đã đưa ${customer.name} vào Blacklist.` : `Đã bỏ Blacklist cho ${customer.name}. Trạng thái: ${CUSTOMER_STATUSES.find(option => option.value === changes.status)?.label}.`);
+  };
+  const acceptImportedCustomers = async (count: number) => {
+    invalidateData(['contracts']);
+    await reload(['customers']);
+    notify(`Đã nhập ${count} khách hàng từ Excel vào Supabase.`);
+  };
+  const updateStore = async (id: number, edits: StoreEdits) => {
+    const row = await updateStoreRecord(id, edits);
+    loader.update('stores', rows => rows.map(store => store.id === id ? row : store));
+    for (const kind of ['customers', 'staff', 'vehicles', 'contracts'] as const) loader.update(kind, rows => rows.map(record => record.store_id === id ? { ...record, store_name: row.name } : record));
+    notify('Đã cập nhật cơ sở trong Supabase.');
+  };
+  const createStore = async (store: StoreCreation) => {
+    const row = await createStoreRecord(store);
+    loader.update('stores', rows => [row, ...rows.filter(record => record.id !== row.id)]);
+    selectStore('all');
+    notify(`Đã tạo cơ sở ${row.name} · ${row.code} trong Supabase.`);
+  };
+  const deleteStore = async (id: number) => {
+    await deleteStoreRecord(id);
+    loader.update('stores', rows => rows.filter(store => store.id !== id));
+    if (selectedStore === String(id)) selectStore('all');
+    notify('Đã xóa cơ sở khỏi Supabase.');
+  };
+  const acceptContractPayment = (context: PaymentContext) => {
+    loader.update('contracts', rows => rows.map(row => row.id === context.id ? { ...row,
+      total_amount: context.total_amount ?? undefined, paid_amount: context.paid_amount ?? undefined, draft_revision: context.revision,
+      ...(context.billing ? { billing_base_total: context.billing_base_total ?? undefined } : {}),
+      deposit_paid: context.deposit_paid, deposit_refunded: context.deposit_refunded,
+      end_date: context.end_date ?? undefined,
+      company_paid_amount: context.company_paid_amount, company_payment_count: context.company_payment_count } : row));
+  };
+  return <ManagementContext.Provider value={{ dataset:visibleDataset, resources, loading, refreshing, error, source: 'api', canSaveContractDrafts: Boolean(repository.supportsContractDrafts)&&can('contracts.draft'), canPayContracts,canFinalizeContracts:can('contracts.finalize'),can,accessUser:user, selectedStore, selectStore, reload, ensureData, invalidateData, save, notify, contractAutofill, createCustomer, updateCustomer, deleteCustomer, setCustomerBlacklist, acceptImportedCustomers, updateStore, createStore, deleteStore, cloneContract, saveContract, saveContractDraft, acceptContractPayment }}>
+    {children}
+    {notification && <div className="mg-toast" role="status"><span>{notification}</span><button type="button" onClick={() => notify('')} aria-label="Đóng thông báo">×</button></div>}
+  </ManagementContext.Provider>;
+}
+
+export function useManagement() {
+  const context = useContext(ManagementContext);
+  if (!context) throw new Error('ManagementProvider is required.');
+  return context;
+}

@@ -1,0 +1,11 @@
+{
+  "source": "api",
+  "passed": 4,
+  "checks": [
+    "live Supabase list/counts and existing drafts load; all status labels are Vietnamese and no old-site link remains",
+    "a failed draft save keeps entered fields visible and re-enables retry; browser intercepted the mutation",
+    "375px list/modal have no page overflow; draft save is accessible; keyboard focus stays inside the modal and Escape closes it",
+    "no browser JavaScript errors"
+  ],
+  "browser_errors": []
+}

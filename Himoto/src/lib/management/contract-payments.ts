@@ -1,0 +1,93 @@
+export const PAYMENT_METHODS = [
+  { value: 'cash', label: 'Tiền mặt' },
+  { value: 'transfer', label: 'Chuyển khoản' },
+  { value: 'company_transfer', label: 'CK tài khoản công ty' },
+] as const;
+export type PaymentMethod = typeof PAYMENT_METHODS[number]['value'];
+export const paymentMethodLabel = (method: PaymentMethod) => method === 'transfer' ? 'CK tài khoản cá nhân' : PAYMENT_METHODS.find(item => item.value === method)?.label || method;
+export const PAYABLE_STATUSES = ['renting', 'overdue', 'wait_payment', 'bad_debt', 'deposit_contract','completed','reserved'];
+export const RENEWABLE_STATUSES = ['renting', 'overdue'];
+export const MAX_PAYMENT_AMOUNT = 9_999_999_999_999;
+export const canAddExtraReceipt = (status: string) => !['draft', 'cancelled'].includes(status);
+export type PaymentPurpose = 'debt' | 'renewal' | 'extra' | 'deposit' | 'deposit_refund' | 'rental_refund';export const PAYMENT_PURPOSES: PaymentPurpose[] = ['debt', 'renewal', 'extra','deposit', 'deposit_refund', 'rental_refund'];
+export function cashbookPaymentPath(contractId: number, purpose: PaymentPurpose = 'debt') {
+  return `/cashbook?contract_id=${contractId}&purpose=${purpose}`;
+}
+export function parsePaymentPurpose(value: string | null | undefined): PaymentPurpose {
+  return PAYMENT_PURPOSES.includes(value as PaymentPurpose) ? value as PaymentPurpose : 'debt';
+}
+export interface PaymentAccount { id: number; label: string; kind: 'cash' | 'bank'; store_id: number; owner_type: string; bank_name?: string; account_number?: string; owner_name?: string }
+/** Cash and bank tables reuse numeric ids; UI/API keys must stay kind-scoped. */
+export function paymentAccountKey(account: Pick<PaymentAccount, 'kind' | 'id'>) {
+  return `${account.kind}:${account.id}`;
+}
+export function parsePaymentAccountKey(value: string): { kind: 'cash' | 'bank'; id: number } | null {
+  const match = /^(cash|bank):([1-9]\d{0,17})$/.exec(String(value || '').trim());
+  return match ? { kind: match[1] as 'cash' | 'bank', id: Number(match[2]) } : null;
+}
+export function paymentAccountMatchesMethod(account: Pick<PaymentAccount, 'kind' | 'owner_type'>, method: PaymentMethod) {
+  if (method === 'cash') return account.kind === 'cash';
+  if (account.kind !== 'bank') return false;
+  return method === 'company_transfer' ? account.owner_type === 'company' : account.owner_type !== 'company';
+}
+export interface ContractPayment {
+  id: number; type: 'in' | 'out'; deposit: boolean; amount: number; paid_at: string; method: string; account: string;
+  note: string; actor: string;
+  renewal?: { license: string; vehicle_name: string; before_return_at?: string; return_at: string } | null;
+}
+export interface RenewalLine { item_id: number; item_revision: string; return_at: string; amount: string }
+export interface RenewalItem {
+  id: number; vehicle_id: number; name: string; license: string; revision: string;
+  return_at: string | null; renewal_amount: number | null; daily_price: number | null;
+}
+export interface PaymentContext {
+  id: number; code: string; status: string; store_id: number; revision: string;
+  total_amount: number | null; paid_amount: number | null; remaining: number | null;
+  deposit_paid: number; deposit_refunded: number; deposit_held: number;
+  deposit_remaining?:number;
+  rental_refundable?:number;
+  company_paid_amount: number; company_payment_count: number;
+  accounts: PaymentAccount[]; history: ContractPayment[];
+  items: RenewalItem[]; end_date: string | null;
+  billing?: import('./contract-billing').InstallmentBalance;
+  billing_base_total?: number | null;
+}
+export interface PaymentInput {
+  request_id: string; revision: string; amount: string; method: PaymentMethod; account_id: number; paid_at: string; note: string;
+  purpose?: 'renewal' | 'extra' | 'deposit' | 'deposit_refund' | 'rental_refund'; item_id?: number; item_revision?: string; return_at?: string; items?: RenewalLine[];
+  renewal_version?: number;
+}
+export interface PaymentResult { context: PaymentContext; transaction_id: number; replayed: boolean; company_transfer: boolean }
+export class PaymentRequestError extends Error {
+  constructor(message: string, public status = 0) { super(message); }
+}
+export function paymentAccounts(context: PaymentContext, method: PaymentMethod) {
+  return context.accounts.filter(account => {
+    if (!paymentAccountMatchesMethod(account, method)) return false;
+    if (method === 'company_transfer') return true;
+    return Number(account.store_id) === Number(context.store_id);
+  });
+}
+export function findPaymentAccount(context: PaymentContext, method: PaymentMethod, accountId: number) {
+  return paymentAccounts(context, method).find(account => account.id === accountId);
+}
+export function vietnamPaymentTime(now = new Date()) {
+  return new Date(now.getTime() + 7 * 60 * 60 * 1000).toISOString().slice(0, 16);
+}
+async function paymentRequest<T>(id: number, input?: PaymentInput, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(`/api/auth/order/car-rental/${id}/payments`, {
+    method: input ? 'POST' : 'GET', credentials: 'same-origin', cache: 'no-store', signal,
+    headers: { Accept: 'application/json', ...(input ? { 'Content-Type': 'application/json' } : {}) },
+    ...(input ? { body: JSON.stringify(input) } : {}),
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok) throw new PaymentRequestError(result?.message || 'Chưa xác nhận được thanh toán. Kiểm tra lịch sử trước khi thử lại.', response.status);
+  const context = input ? result?.data?.context : result?.data;
+  if (result?.status !== 'success' || context?.id !== id || typeof context?.revision !== 'string' || !/^\d+$/.test(context.revision) ||
+      !Array.isArray(context?.accounts) || !Array.isArray(context?.history) || !Array.isArray(context?.items) ||
+      ![context?.total_amount, context?.paid_amount, context?.remaining].every(value => value === null || (Number.isSafeInteger(value) && value >= 0)) ||
+      (input && (!Number.isSafeInteger(result?.data?.transaction_id) || result.data.transaction_id <= 0 || typeof result.data.replayed !== 'boolean' || result.data.company_transfer !== (input.method === 'company_transfer')))) throw new PaymentRequestError('Kết quả thanh toán chưa hợp lệ. Kiểm tra lịch sử trước khi thử lại.');
+  return result.data as T;
+}
+export const loadPaymentContext = (id: number, signal?: AbortSignal) => paymentRequest<PaymentContext>(id, undefined, signal);
+export const saveContractPayment = (id: number, input: PaymentInput) => paymentRequest<PaymentResult>(id, input);
